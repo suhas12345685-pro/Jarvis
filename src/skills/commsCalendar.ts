@@ -70,6 +70,7 @@ registerSkill({
       summary: { type: 'string', description: 'Event title' },
       startDateTime: { type: 'string', description: 'Start datetime in ISO 8601 format' },
       endDateTime: { type: 'string', description: 'End datetime in ISO 8601 format' },
+      timeZone: { type: 'string', description: 'IANA timezone (e.g. "America/New_York"). Defaults to UTC.' },
       description: { type: 'string', description: 'Event description (optional)' },
       location: { type: 'string', description: 'Event location (optional)' },
       attendeeEmails: {
@@ -86,14 +87,16 @@ registerSkill({
       const calendar = await getCalendarClient(ctx)
       const attendees = ((input.attendeeEmails as string[]) ?? []).map(email => ({ email }))
 
+      const tz = String(input.timeZone ?? 'UTC')
+
       const res = await calendar.events.insert({
         calendarId: String(input.calendarId ?? 'primary'),
         requestBody: {
           summary: String(input.summary),
           description: input.description ? String(input.description) : undefined,
           location: input.location ? String(input.location) : undefined,
-          start: { dateTime: String(input.startDateTime), timeZone: 'UTC' },
-          end: { dateTime: String(input.endDateTime), timeZone: 'UTC' },
+          start: { dateTime: String(input.startDateTime), timeZone: tz },
+          end: { dateTime: String(input.endDateTime), timeZone: tz },
           attendees: attendees.length > 0 ? attendees : undefined,
         },
       })

@@ -65,7 +65,7 @@ registerSkill({
         await page.waitForSelector(String(input.waitForSelector), { timeout: 10_000 }).catch(() => {})
       }
 
-      const text = await page.evaluate(() => document.body.innerText)
+      const text = await page.evaluate('document.body.innerText') as string
       await page.close()
 
       const truncated = text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text
@@ -93,7 +93,7 @@ registerSkill({
       const page = await context.newPage()
       await page.goto(String(input.url), { waitUntil: 'domcontentloaded', timeout: 30_000 })
       await page.click(String(input.selector), { timeout: 10_000 })
-      const text = await page.evaluate(() => document.body.innerText)
+      const text = await page.evaluate('document.body.innerText') as string
       await page.close()
       return { output: text.slice(0, 8000), isError: false }
     } catch (err) {

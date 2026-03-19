@@ -62,22 +62,20 @@ function cosineSimilarity(a: number[], b: number[]): number {
 // ── Supabase Strategy ─────────────────────────────────────────────────────────
 
 class SupabaseStrategy implements MemoryStrategy {
-  private client: import('@supabase/supabase-js').SupabaseClient
+  private client!: import('@supabase/supabase-js').SupabaseClient
   private apiKey: string
+  private clientReady: Promise<void>
 
   constructor(url: string, serviceKey: string, apiKey: string) {
     this.apiKey = apiKey
     // Lazy import to avoid loading supabase in sqlite mode
-    import('@supabase/supabase-js').then(({ createClient }) => {
+    this.clientReady = import('@supabase/supabase-js').then(({ createClient }) => {
       this.client = createClient(url, serviceKey)
     })
   }
 
   private async ensureClient() {
-    if (!this.client) {
-      const { createClient } = await import('@supabase/supabase-js')
-      this.client = createClient('', '') // replaced by constructor
-    }
+    await this.clientReady
   }
 
   async insert(
@@ -137,15 +135,24 @@ interface MemoryRow {
 }
 
 class SQLiteStrategy implements MemoryStrategy {
-  private db: import('better-sqlite3').Database
+  private db!: import('better-sqlite3').Database
   private apiKey: string
+  private ready: Promise<void>
 
   constructor(dbPath: string, apiKey: string) {
     this.apiKey = apiKey
-    // Import synchronously — better-sqlite3 is sync by design
-    const Database = (await import('better-sqlite3' as string)).default as typeof import('better-sqlite3')
-    this.db = new (Database as unknown as new (path: string) => import('better-sqlite3').Database)(dbPath)
+    // Use async init via a ready promise — constructors can't be async
+    this.ready = this.initialize(dbPath)
+  }
+
+  private async initialize(dbPath: string): Promise<void> {
+    const BetterSqlite3 = (await import('better-sqlite3')).default
+    this.db = new BetterSqlite3(dbPath)
     this.migrate()
+  }
+
+  private async ensureReady(): Promise<void> {
+    await this.ready
   }
 
   private migrate(): void {
@@ -166,6 +173,7 @@ class SQLiteStrategy implements MemoryStrategy {
     _embedding: number[],
     metadata: Record<string, unknown>
   ): Promise<Memory> {
+    await this.ensureReady()
     const embedding = await embed(content, this.apiKey)
     const id = randomUUID()
     const createdAt = new Date()
@@ -177,6 +185,7 @@ class SQLiteStrategy implements MemoryStrategy {
   }
 
   async search(queryEmbedding: number[], topK: number): Promise<Memory[]> {
+    await this.ensureReady()
     const rows = this.db.prepare('SELECT * FROM memories').all() as MemoryRow[]
     const scored = rows.map(row => {
       const embedding = JSON.parse(row.embedding) as number[]
@@ -194,10 +203,12 @@ class SQLiteStrategy implements MemoryStrategy {
   }
 
   async delete(id: string): Promise<void> {
+    await this.ensureReady()
     this.db.prepare('DELETE FROM memories WHERE id = ?').run(id)
   }
 
   async close(): Promise<void> {
+    await this.ensureReady()
     this.db.close()
   }
 }

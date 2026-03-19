@@ -5,6 +5,7 @@ import { getLogger } from './logger.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
+const TOOL_TIMEOUT_MS = 30_000
 
 const SYSTEM_PROMPT_BASE = `You are JARVIS, a highly autonomous AI agent. You are loyal exclusively to your operator.
 
@@ -17,6 +18,25 @@ Core directives:
 - If a tool fails, analyze the error and attempt a corrected retry once before reporting failure
 
 You have memory of previous conversations. Use context clues to provide continuity.`
+
+async function executeToolWithTimeout(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: AgentContext,
+  timeoutMs: number = TOOL_TIMEOUT_MS
+): Promise<{ output: string; isError: boolean }> {
+  const skill = getSkill(name)
+  if (!skill) {
+    return { output: `Unknown tool: ${name}`, isError: true }
+  }
+
+  return Promise.race([
+    skill.handler(input, ctx),
+    new Promise<{ output: string; isError: boolean }>((_, reject) =>
+      setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ])
+}
 
 export async function runToolLoop(
   ctx: AgentContext,
@@ -81,25 +101,36 @@ export async function runToolLoop(
       // Add assistant message
       messages.push({ role: 'assistant', content: response.content })
 
-      // Dispatch tool calls in parallel
+      // Dispatch tool calls in parallel with timeout and retry
       const toolResults = await Promise.all(
         toolUseBlocks.map(async block => {
           const tb = block as Anthropic.ToolUseBlock
-          logger.info('Dispatching tool', { tool: tb.name, input: tb.input })
-
-          const skill = getSkill(tb.name)
-          if (!skill) {
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: tb.id,
-              content: `Unknown tool: ${tb.name}`,
-              is_error: true,
-            }
-          }
+          const input = tb.input as Record<string, unknown>
+          logger.info('Dispatching tool', { tool: tb.name, input })
 
           try {
-            const result = await skill.handler(tb.input as Record<string, unknown>, ctx)
+            const result = await executeToolWithTimeout(tb.name, input, ctx)
             logger.info('Tool result', { tool: tb.name, isError: result.isError })
+
+            // Retry once on error with the same input
+            if (result.isError) {
+              logger.info('Tool failed, retrying once', { tool: tb.name })
+              try {
+                const retryResult = await executeToolWithTimeout(tb.name, input, ctx)
+                if (!retryResult.isError) {
+                  logger.info('Tool retry succeeded', { tool: tb.name })
+                  return {
+                    type: 'tool_result' as const,
+                    tool_use_id: tb.id,
+                    content: retryResult.output,
+                    is_error: false,
+                  }
+                }
+              } catch {
+                // Retry failed, fall through to original error
+              }
+            }
+
             return {
               type: 'tool_result' as const,
               tool_use_id: tb.id,
@@ -133,7 +164,7 @@ export async function runToolLoop(
       }
     }
 
-    return 'Task reached maximum tool call depth. Please try a simpler request.'
+    return 'Task reached maximum tool call depth. Please try breaking this into simpler steps.'
   } finally {
     clearFeedback()
   }
