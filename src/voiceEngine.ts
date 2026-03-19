@@ -5,6 +5,9 @@ import { runToolLoop } from './toolCaller.js'
 import { getProvider } from './llm/registry.js'
 import { getByoakValue } from './config.js'
 
+const MAX_RECONNECT_ATTEMPTS = 5
+const BASE_RECONNECT_DELAY_MS = 2000
+
 /**
  * LiveKit voice pipeline.
  *
@@ -35,12 +38,20 @@ export async function startVoiceEngine(config: AppConfig, memory: MemoryLayer): 
   const { WorkerOptions, cli, defineAgent, vad } = agentsModule
 
   let activeController: AbortController | null = null
+  let reconnectAttempts = 0
 
   const agent = defineAgent({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     entry: async (ctx: any) => {
-      await ctx.connect()
-      logger.info('LiveKit agent connected', { room: ctx.room.name })
+      try {
+        await ctx.connect()
+        reconnectAttempts = 0 // Reset on successful connection
+        logger.info('LiveKit agent connected', { room: ctx.room.name })
+      } catch (err) {
+        logger.error('LiveKit connection failed', { error: err })
+        await attemptReconnect(ctx)
+        return
+      }
 
       const session = await ctx.waitForParticipant()
       logger.info('Participant joined', { identity: session.identity })
@@ -58,6 +69,16 @@ export async function startVoiceEngine(config: AppConfig, memory: MemoryLayer): 
           speechPadDuration: 0.2,
         }),
         llm: createJarvisLLM(config),
+      })
+
+      // Handle disconnection with reconnect
+      ctx.room.on('disconnected', async () => {
+        logger.warn('LiveKit room disconnected', { room: ctx.room.name })
+        if (activeController) {
+          activeController.abort()
+          activeController = null
+        }
+        await attemptReconnect(ctx)
       })
 
       agentSession.on('user_speech_committed', async (transcript: string) => {
@@ -83,7 +104,11 @@ export async function startVoiceEngine(config: AppConfig, memory: MemoryLayer): 
           byoak: config.byoak,
           sendInterim: async () => undefined,
           sendFinal: async (text: string) => {
-            await agentSession.say(text, { allowInterruptions: true })
+            try {
+              await agentSession.say(text, { allowInterruptions: true })
+            } catch (err) {
+              logger.error('TTS output failed', { error: err })
+            }
           },
         }
 
@@ -97,7 +122,11 @@ export async function startVoiceEngine(config: AppConfig, memory: MemoryLayer): 
         } catch (err) {
           if ((err as Error).message !== 'Aborted') {
             logger.error('Voice tool loop error', { error: err })
-            await agentSession.say('I encountered an error processing your request.', {})
+            try {
+              await agentSession.say('I encountered an error processing your request.', {})
+            } catch {
+              // TTS failed too — nothing more we can do
+            }
           }
         } finally {
           activeController = null
@@ -107,6 +136,30 @@ export async function startVoiceEngine(config: AppConfig, memory: MemoryLayer): 
       await agentSession.start(ctx.room, session)
     },
   })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function attemptReconnect(ctx: any): Promise<void> {
+    while (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++
+      const delay = BASE_RECONNECT_DELAY_MS * Math.pow(2, reconnectAttempts - 1)
+      logger.info('Attempting LiveKit reconnect', { attempt: reconnectAttempts, delayMs: delay })
+
+      await new Promise(r => setTimeout(r, delay))
+
+      try {
+        await ctx.connect()
+        reconnectAttempts = 0
+        logger.info('LiveKit reconnected successfully')
+        return
+      } catch (err) {
+        logger.error('LiveKit reconnect failed', {
+          attempt: reconnectAttempts,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    logger.error('LiveKit max reconnect attempts reached — voice engine stopped')
+  }
 
   cli.runApp(
     new WorkerOptions({

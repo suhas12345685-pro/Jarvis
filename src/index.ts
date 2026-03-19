@@ -6,6 +6,7 @@ import { createMemoryLayer } from './memoryLayer.js'
 import { createRouter } from './router.js'
 import { startVoiceEngine } from './voiceEngine.js'
 import { startDiscordClient } from './channels/discord.js'
+import { startTelegramPolling } from './channels/telegram.js'
 import { loadAllSkills } from './skills/index.js'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
@@ -47,6 +48,9 @@ async function main() {
 
   // Start Discord client (WebSocket, no-op if not configured)
   await startDiscordClient(config, memory, queue)
+
+  // Start Telegram polling (no-op if not configured or in webhook mode)
+  await startTelegramPolling(config, memory, queue)
 
   // Start voice engine (no-op if LiveKit not configured)
   await startVoiceEngine(config, memory)

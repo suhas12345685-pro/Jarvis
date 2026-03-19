@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI, type Content, type FunctionDeclaration, type Part } from '@google/generative-ai'
-import type { LLMProvider, LLMChatOptions, LLMResponse, LLMMessage, LLMToolCall } from './types.js'
+import type { LLMProvider, LLMChatOptions, LLMResponse, LLMMessage, LLMToolCall, LLMStreamEvent } from './types.js'
 
 export class GeminiProvider implements LLMProvider {
   name = 'gemini'
@@ -27,6 +27,53 @@ export class GeminiProvider implements LLMProvider {
     const response = result.response
 
     return fromGeminiResponse(response)
+  }
+
+  async *stream(opts: LLMChatOptions): AsyncIterable<LLMStreamEvent> {
+    const tools = opts.tools?.map(t => ({
+      name: t.name,
+      description: t.description,
+      parameters: toGeminiParameters(t.inputSchema),
+    } as unknown as FunctionDeclaration))
+
+    const model = this.genAI.getGenerativeModel({
+      model: opts.model,
+      systemInstruction: opts.system,
+      tools: tools && tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
+    })
+
+    const contents = toGeminiContents(opts.messages)
+    const result = await model.generateContentStream({ contents })
+
+    let fullText = ''
+    const toolCalls: LLMToolCall[] = []
+
+    for await (const chunk of result.stream) {
+      const candidate = chunk.candidates?.[0]
+      if (!candidate) continue
+
+      for (const part of candidate.content.parts) {
+        if ('text' in part && part.text) {
+          fullText += part.text
+          yield { type: 'text_delta', text: part.text }
+        }
+        if ('functionCall' in part && part.functionCall) {
+          const tc: LLMToolCall = {
+            id: `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: part.functionCall.name,
+            arguments: (part.functionCall.args ?? {}) as Record<string, unknown>,
+          }
+          toolCalls.push(tc)
+          yield { type: 'tool_call_start', toolCall: tc }
+          yield { type: 'tool_call_end', toolCall: tc }
+        }
+      }
+    }
+
+    const stopReason: LLMResponse['stopReason'] =
+      toolCalls.length > 0 ? 'tool_use' : 'end_turn'
+
+    yield { type: 'done', response: { text: fullText, toolCalls, stopReason } }
   }
 }
 

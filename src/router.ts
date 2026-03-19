@@ -6,6 +6,7 @@ import type { AppConfig, AgentContext } from './types/index.js'
 import type { MemoryLayer } from './memoryLayer.js'
 import { runToolLoop } from './toolCaller.js'
 import { getLogger } from './logger.js'
+import { IPRateLimiter } from './security.js'
 
 export const jarvisEvents = new EventEmitter()
 
@@ -44,6 +45,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   const app = express()
   const logger = getLogger()
   const rateLimiter = new RateLimiter()
+  const ipRateLimiter = new IPRateLimiter(60_000, 100) // 100 req/min per IP
 
   // ── Queue ─────────────────────────────────────────────────────────────────
   const queue = new Queue<AgentJob>('agent-tasks', {
@@ -248,7 +250,17 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   // ── Middleware ─────────────────────────────────────────────────────────────
   // Raw body for HMAC, parsed JSON for everything else
   app.use('/webhooks/slack', express.raw({ type: 'application/json' }))
-  app.use(express.json())
+  app.use(express.json({ limit: '1mb' }))
+
+  // IP-based rate limiting for all endpoints
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown'
+    if (!ipRateLimiter.isAllowed(ip)) {
+      res.status(429).json({ error: 'Too many requests from this IP' })
+      return
+    }
+    next()
+  })
 
   // ── Context Compiler ──────────────────────────────────────────────────────
   async function compileContext(

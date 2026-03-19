@@ -2,6 +2,7 @@ import axios from 'axios'
 import { registerSkill } from './index.js'
 import type { AgentContext, SkillResult } from '../types/index.js'
 import { getByoakValue } from '../config.js'
+import { validateUrl, validateHeaders } from '../security.js'
 
 registerSkill({
   name: 'api_fetch',
@@ -39,6 +40,18 @@ registerSkill({
     const method = String(input.method ?? 'GET').toUpperCase()
     const headers: Record<string, string> = (input.headers as Record<string, string>) ?? {}
 
+    // SSRF protection — block internal/private URLs
+    const urlCheck = validateUrl(url)
+    if (!urlCheck.valid) {
+      return { output: `BLOCKED: ${urlCheck.error}`, isError: true }
+    }
+
+    // Header injection protection
+    const headerCheck = validateHeaders(headers)
+    if (!headerCheck.valid) {
+      return { output: `BLOCKED: ${headerCheck.error}`, isError: true }
+    }
+
     // Inject BYOAK key if requested
     if (input.byoakService) {
       const keyName = String(input.byoakKeyName ?? 'API_KEY')
@@ -55,8 +68,18 @@ registerSkill({
         headers,
         data: input.body,
         timeout: 30_000,
+        maxRedirects: 5,
         validateStatus: () => true, // Return response even on 4xx/5xx
       })
+
+      // Validate redirect target for SSRF
+      const finalUrl = response.request?.res?.responseUrl as string | undefined
+      if (finalUrl && finalUrl !== url) {
+        const redirectCheck = validateUrl(finalUrl)
+        if (!redirectCheck.valid) {
+          return { output: `BLOCKED: Redirect to blocked URL: ${redirectCheck.error}`, isError: true }
+        }
+      }
 
       const body = typeof response.data === 'string'
         ? response.data
@@ -90,7 +113,14 @@ registerSkill({
     required: ['endpoint', 'query'],
   },
   handler: async (input: Record<string, unknown>, ctx: AgentContext): Promise<SkillResult> => {
+    const endpoint = String(input.endpoint)
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+
+    // SSRF protection
+    const urlCheck = validateUrl(endpoint)
+    if (!urlCheck.valid) {
+      return { output: `BLOCKED: ${urlCheck.error}`, isError: true }
+    }
 
     if (input.byoakService) {
       const key = getByoakValue(ctx.byoak, String(input.byoakService), 'API_KEY')
@@ -99,7 +129,7 @@ registerSkill({
 
     try {
       const response = await axios.post(
-        String(input.endpoint),
+        endpoint,
         { query: input.query, variables: input.variables ?? {} },
         { headers, timeout: 30_000 }
       )
