@@ -27,23 +27,47 @@ export function toLLMTools(): LLMToolDefinition[] {
 // Auto-register all skills by importing them
 export async function loadAllSkills(): Promise<void> {
   await Promise.all([
+    // System & files
     import('./osTerminal.js'),
     import('./cronHeartbeat.js'),
     import('./localFileOps.js'),
+    import('./systemInfo.js'),
+    // Vision
     import('./visionScreen.js'),
     import('./visionCamera.js'),
+    // Web & browser
     import('./headlessBrowser.js'),
     import('./apiFetcher.js'),
+    import('./webSearch.js'),
+    // Communications
     import('./commsEmail.js'),
     import('./commsChannels.js'),
     import('./commsCalendar.js'),
     import('./commsDiscord.js'),
     import('./commsGChat.js'),
+    import('./notifications.js'),
+    // Payments
     import('./businessPayments.js'),
     import('./businessPaymentsRazorpay.js'),
     import('./businessPaymentsPaypal.js'),
+    // Data & text
     import('./dataAnalysis.js'),
-    import('./webSearch.js'),
     import('./textTransform.js'),
+    import('./encoding.js'),
+    import('./mathCrypto.js'),
+    // Git
+    import('./gitOps.js'),
+    // Memory
+    import('./memorySkills.js'),
+    // Proactive
+    import('./proactive.js'),
+    // Meeting & calls
+    import('./meetingCall.js'),
+    // Skill builder (JARVIS creates tools)
+    import('./skillBuilder.js'),
   ])
+
+  // Load user-created custom skills from disk
+  const { loadCustomSkills } = await import('./skillBuilder.js')
+  await loadCustomSkills()
 }

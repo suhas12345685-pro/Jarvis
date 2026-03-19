@@ -5,7 +5,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 10000,
-    exclude: ['node_modules', 'dist', 'tests/integration/**'],
+    exclude: [
+      'node_modules',
+      'dist',
+      ...(process.env.INTEGRATION ? [] : ['tests/integration/**']),
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

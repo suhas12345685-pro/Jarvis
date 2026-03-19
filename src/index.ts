@@ -3,11 +3,13 @@ import { resolve } from 'path'
 import { loadConfig } from './config.js'
 import { createLogger, registerByoakValues } from './logger.js'
 import { createMemoryLayer } from './memoryLayer.js'
-import { createRouter } from './router.js'
+import { createRouter, jarvisEvents } from './router.js'
 import { startVoiceEngine } from './voiceEngine.js'
 import { startDiscordClient } from './channels/discord.js'
 import { startTelegramPolling } from './channels/telegram.js'
 import { loadAllSkills } from './skills/index.js'
+import { initProactiveEngine, shutdownProactiveEngine } from './proactiveEngine.js'
+import { initMeetingSkills } from './skills/meetingCall.js'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
 
@@ -36,7 +38,10 @@ async function main() {
   const memory = await createMemoryLayer(config)
   logger.info('Memory layer ready')
 
-  // Load all skill modules
+  // Initialize meeting engine (provides config/memory to meeting skills)
+  initMeetingSkills(config, memory)
+
+  // Load all skill modules (including custom user-built skills)
   await loadAllSkills()
   logger.info('Skills loaded')
 
@@ -55,9 +60,34 @@ async function main() {
   // Start voice engine (no-op if LiveKit not configured)
   await startVoiceEngine(config, memory)
 
+  // Initialize proactive engine — JARVIS acts before the user asks
+  await initProactiveEngine(config, memory, async (task, result) => {
+    logger.info('Proactive task result', { taskId: task.id, name: task.name })
+    jarvisEvents.emit('proactive:result', { task, result })
+
+    // If the task has a specific channel, attempt to deliver
+    if (task.channel === 'slack' && task.channelPayload.channel) {
+      try {
+        const { WebClient } = await import('@slack/web-api')
+        const botToken = config.byoak.find(e => e.service === 'slack' && e.keyName === 'BOT_TOKEN')?.value
+        if (botToken) {
+          const client = new WebClient(botToken)
+          await client.chat.postMessage({
+            channel: task.channelPayload.channel as string,
+            text: `🤖 *Proactive: ${task.name}*\n\n${result}`,
+          })
+        }
+      } catch (err) {
+        logger.error('Failed to deliver proactive result', { error: err })
+      }
+    }
+  })
+  logger.info('Proactive engine ready')
+
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully`)
+    shutdownProactiveEngine()
     server.close(async () => {
       await memory.close()
       logger.info('JARVIS shut down cleanly')

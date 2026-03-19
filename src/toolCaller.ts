@@ -1,5 +1,5 @@
 import type { AgentContext, AppConfig } from './types/index.js'
-import type { LLMMessage, LLMToolDefinition } from './llm/types.js'
+import type { LLMMessage, LLMToolDefinition, LLMStreamEvent } from './llm/types.js'
 import { getProvider } from './llm/registry.js'
 import { getAllDefinitions } from './skills/index.js'
 import { getSkill } from './skills/index.js'
@@ -216,4 +216,115 @@ export async function runToolLoop(
   } finally {
     clearFeedback()
   }
+}
+
+/**
+ * Streaming tool loop — streams text deltas to the channel in real time.
+ * Falls back to non-streaming if the provider doesn't support it.
+ */
+export async function runStreamingToolLoop(
+  ctx: AgentContext,
+  config: AppConfig,
+  onTextDelta: (text: string) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  const logger = getLogger()
+  const apiKey = resolveApiKey(config)
+  const provider = getProvider({
+    provider: config.llmProvider,
+    model: config.llmModel,
+    apiKey,
+  })
+
+  // If provider doesn't support streaming, fall back
+  if (!provider.stream) {
+    return runToolLoop(ctx, config, signal)
+  }
+
+  const tools = toLLMTools()
+  const systemPrompt = [SYSTEM_PROMPT_BASE, ctx.systemPrompt].filter(Boolean).join('\n\n')
+  const messages: LLMMessage[] = [{ role: 'user', content: ctx.rawMessage }]
+
+  let rounds = 0
+
+  while (rounds < MAX_TOOL_ROUNDS) {
+    if (signal?.aborted) throw new Error('Aborted')
+    rounds++
+
+    logger.info('Streaming tool loop round', { round: rounds, userId: ctx.userId })
+
+    let fullText = ''
+    let response: import('./llm/types.js').LLMResponse | null = null
+
+    try {
+      const stream = provider.stream!({
+        model: config.llmModel,
+        system: systemPrompt,
+        messages,
+        tools: tools.length > 0 ? tools : undefined,
+        maxTokens: 4096,
+        signal,
+      })
+
+      for await (const event of stream) {
+        if (signal?.aborted) throw new Error('Aborted')
+
+        if (event.type === 'text_delta' && event.text) {
+          fullText += event.text
+          onTextDelta(event.text)
+        }
+
+        if (event.type === 'done' && event.response) {
+          response = event.response
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.message === 'Aborted')) throw err
+      logger.error('Stream error, falling back to non-streaming', { error: err })
+      return runToolLoop(ctx, config, signal)
+    }
+
+    if (!response) {
+      return fullText.trim() || 'Done.'
+    }
+
+    if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) {
+      return response.text.trim() || 'Done.'
+    }
+
+    // Process tool calls (same as non-streaming)
+    messages.push({
+      role: 'assistant',
+      content: response.text,
+      toolCalls: response.toolCalls,
+    })
+
+    for (const tc of response.toolCalls) {
+      if (signal?.aborted) throw new Error('Aborted')
+
+      logger.info('Dispatching tool (streaming)', { tool: tc.name })
+      let output: string
+      let isError: boolean
+
+      try {
+        const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+        output = result.output
+        isError = result.isError
+
+        if (isError) {
+          try {
+            const retry = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+            if (!retry.isError) { output = retry.output; isError = false }
+          } catch { /* retry failed */ }
+        }
+      } catch (err) {
+        output = `Tool error: ${err instanceof Error ? err.message : String(err)}`
+        isError = true
+      }
+
+      messages.push({ role: 'tool', toolCallId: tc.id, content: output })
+    }
+  }
+
+  return 'Task reached maximum tool call depth.'
 }
