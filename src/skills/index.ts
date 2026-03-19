@@ -15,6 +15,10 @@ export function getAllDefinitions(): SkillDefinition[] {
   return Array.from(registry.values())
 }
 
+<<<<<<< HEAD
+=======
+/** Convert SkillDefinition[] to the LLM-agnostic tool definition format */
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 export function toLLMTools(): LLMToolDefinition[] {
   return getAllDefinitions().map(skill => ({
     name: skill.name,
@@ -23,6 +27,10 @@ export function toLLMTools(): LLMToolDefinition[] {
   }))
 }
 
+<<<<<<< HEAD
+=======
+// Auto-register all skills by importing them
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 export async function loadAllSkills(): Promise<void> {
   await Promise.all([
     import('./osTerminal.js'),
@@ -43,8 +51,13 @@ export async function loadAllSkills(): Promise<void> {
     import('./dataAnalysis.js'),
     import('./webSearch.js'),
     import('./textTransform.js'),
+<<<<<<< HEAD
     import('./emotionSkills.js'),
   ])
 }
 
 export { type SkillDefinition, type SkillResult } from '../types/skills.js'
+=======
+  ])
+}
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.tmp
+*.db
+*.db-shm
+*.db-wal
+~/.jarvis/
+coverage/
+.DS_Store
+*.log
+pm2-*.log

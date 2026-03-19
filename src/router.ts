@@ -7,7 +7,10 @@ import type { MemoryLayer } from './memoryLayer.js'
 import { runToolLoop } from './toolCaller.js'
 import { getLogger } from './logger.js'
 import { IPRateLimiter } from './security.js'
+<<<<<<< HEAD
 import { getEmotionEngine, type EmotionEngine } from './emotionEngine.js'
+=======
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 
 export const jarvisEvents = new EventEmitter()
 
@@ -19,6 +22,11 @@ interface AgentJob {
   channelPayload: Record<string, unknown>
 }
 
+<<<<<<< HEAD
+=======
+// ── Simple per-user rate limiter ───────────────────────────────────────────────
+
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 class RateLimiter {
   private requests = new Map<string, number[]>()
   private readonly windowMs: number
@@ -44,6 +52,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   const app = express()
   const logger = getLogger()
   const rateLimiter = new RateLimiter()
+<<<<<<< HEAD
   const ipRateLimiter = new IPRateLimiter(60_000, 100)
   let emotionEngine: EmotionEngine
 
@@ -53,6 +62,11 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     emotionEngine = getEmotionEngine()
   }
 
+=======
+  const ipRateLimiter = new IPRateLimiter(60_000, 100) // 100 req/min per IP
+
+  // ── Queue ─────────────────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   const queue = new Queue<AgentJob>('agent-tasks', {
     connection: { url: config.redisUrl },
   })
@@ -62,10 +76,15 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     async (job: Job<AgentJob>) => {
       const { channelType, userId, threadId, rawMessage, channelPayload } = job.data
 
+<<<<<<< HEAD
+=======
+      // Build channel-specific send functions from payload
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       const { sendInterim, sendFinal } = await buildChannelCallbacks(
         channelType, channelPayload, config
       )
 
+<<<<<<< HEAD
       emotionEngine.updateEmotion(userId, rawMessage)
       const emotionState = emotionEngine.getOrCreateState(userId)
       const personality = emotionEngine.getPersonality(userId)
@@ -91,6 +110,22 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
         emotionEngine.calibratePersonalityFromInteraction(userId, rawMessage, result)
 
         jarvisEvents.emit('task:complete', { userId, result: emotionalResult.response, emotion: emotionState.primary })
+=======
+      const ctx = await compileContext(
+        channelType, userId, threadId, rawMessage, sendInterim, sendFinal
+      )
+
+      jarvisEvents.emit('task:start', { userId, threadId })
+
+      try {
+        const result = await runToolLoop(ctx, config)
+        await sendFinal(result, ctx.interimMessageId)
+        await memory.insertMemory(
+          `User: ${rawMessage}\nAssistant: ${result}`,
+          { userId, channelType }
+        )
+        jarvisEvents.emit('task:complete', { userId, result })
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         logger.error('Task failed', { userId, error: msg })
@@ -105,9 +140,13 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     logger.error('Worker job failed', { jobId: job?.id, error: err.message })
   })
 
+<<<<<<< HEAD
   setInterval(() => {
     emotionEngine.decayEmotions()
   }, 60000)
+=======
+  // ── Channel callback builder ────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 
   async function buildChannelCallbacks(
     channelType: AgentContext['channelType'],
@@ -252,6 +291,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       }
     }
 
+<<<<<<< HEAD
+=======
+    // Default for API channel — collect responses via events
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     return {
       sendInterim: async (msg: string) => {
         jarvisEvents.emit('interim', { message: msg })
@@ -263,9 +306,18 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     }
   }
 
+<<<<<<< HEAD
   app.use('/webhooks/slack', express.raw({ type: 'application/json' }))
   app.use(express.json({ limit: '1mb' }))
 
+=======
+  // ── Middleware ─────────────────────────────────────────────────────────────
+  // Raw body for HMAC, parsed JSON for everything else
+  app.use('/webhooks/slack', express.raw({ type: 'application/json' }))
+  app.use(express.json({ limit: '1mb' }))
+
+  // IP-based rate limiting for all endpoints
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.use((req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown'
     if (!ipRateLimiter.isAllowed(ip)) {
@@ -275,21 +327,30 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     next()
   })
 
+<<<<<<< HEAD
+=======
+  // ── Context Compiler ──────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   async function compileContext(
     channelType: AgentContext['channelType'],
     userId: string,
     threadId: string,
     rawMessage: string,
     sendInterim: AgentContext['sendInterim'],
+<<<<<<< HEAD
     sendFinal: AgentContext['sendFinal'],
     emotionState?: ReturnType<EmotionEngine['getOrCreateState']>,
     personality?: ReturnType<EmotionEngine['getPersonality']>
+=======
+    sendFinal: AgentContext['sendFinal']
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   ): Promise<AgentContext> {
     const memories = await memory.semanticSearch(rawMessage, 5)
     const memoryBlock = memories.length > 0
       ? `\n\nRelevant memories:\n${memories.map(m => `- ${m.content}`).join('\n')}`
       : ''
 
+<<<<<<< HEAD
     const emotionBlock = emotionState
       ? `\n\nCurrent emotional context: I'm feeling ${emotionState.mood} (${emotionState.primary} at ${Math.round(emotionState.intensity * 100)}% intensity).`
       : ''
@@ -299,6 +360,9 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       : ''
 
     const systemPrompt = `You are speaking with user ${userId} via ${channelType}.${memoryBlock}${emotionBlock}${personalityBlock}`
+=======
+    const systemPrompt = `You are speaking with user ${userId} via ${channelType}.${memoryBlock}`
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 
     return {
       channelType,
@@ -308,13 +372,20 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       memories,
       systemPrompt,
       byoak: config.byoak,
+<<<<<<< HEAD
       emotionState,
       personality,
+=======
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       sendInterim,
       sendFinal,
     }
   }
 
+<<<<<<< HEAD
+=======
+  // ── Slack Webhook ─────────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.post('/webhooks/slack', async (req: Request, res: Response) => {
     const signingSecret = config.byoak.find(e => e.service === 'slack' && e.keyName === 'SIGNING_SECRET')?.value
     if (!signingSecret) {
@@ -326,6 +397,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const timestamp = req.headers['x-slack-request-timestamp'] as string
     const slackSig = req.headers['x-slack-signature'] as string
 
+<<<<<<< HEAD
+=======
+    // Replay attack check (5 minute window)
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     if (Math.abs(Date.now() / 1000 - parseInt(timestamp, 10)) > 300) {
       res.status(403).json({ error: 'Request too old' })
       return
@@ -345,6 +420,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
 
     const body = JSON.parse(rawBody.toString('utf-8')) as Record<string, unknown>
 
+<<<<<<< HEAD
+=======
+    // URL verification challenge
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     if (body.type === 'url_verification') {
       res.json({ challenge: body.challenge })
       return
@@ -361,6 +440,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const channel = event.channel as string
     const rawMessage = (event.text as string).replace(/<@[A-Z0-9]+>/g, '').trim()
 
+<<<<<<< HEAD
+=======
+    // Rate limit check
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     if (!rateLimiter.isAllowed(userId)) {
       res.status(429).json({ error: 'Rate limit exceeded' })
       return
@@ -368,6 +451,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
 
     res.status(200).end()
 
+<<<<<<< HEAD
+=======
+    // Enqueue the task — worker handles execution
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     await queue.add('slack-message', {
       channelType: 'slack',
       userId,
@@ -377,6 +464,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     })
   })
 
+<<<<<<< HEAD
+=======
+  // ── Telegram Webhook ──────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.post('/webhooks/telegram', async (req: Request, res: Response) => {
     const secret = req.headers['x-telegram-bot-api-secret-token']
     const expectedSecret = config.byoak.find(e => e.service === 'telegram' && e.keyName === 'WEBHOOK_SECRET')?.value
@@ -395,6 +486,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const threadId = String(message.message_id)
     const rawMessage = message.text as string
 
+<<<<<<< HEAD
+=======
+    // Rate limit check
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     if (!rateLimiter.isAllowed(userId)) {
       res.status(429).json({ error: 'Rate limit exceeded' })
       return
@@ -402,6 +497,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
 
     res.status(200).end()
 
+<<<<<<< HEAD
+=======
+    // Enqueue the task — worker handles execution
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     await queue.add('telegram-message', {
       channelType: 'telegram',
       userId,
@@ -411,10 +510,18 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     })
   })
 
+<<<<<<< HEAD
+=======
+  // ── Google Chat Webhook ──────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.post('/webhooks/gchat', async (req: Request, res: Response) => {
     const body = req.body as Record<string, unknown>
     const msgType = body.type as string | undefined
 
+<<<<<<< HEAD
+=======
+    // Google Chat sends various event types
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     if (msgType !== 'MESSAGE') {
       res.status(200).json({})
       return
@@ -433,7 +540,11 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const spaceName = String(space.name)
     const threadId = String((message.thread as Record<string, unknown>)?.name ?? spaceName)
     const rawMessage = (message.text as string)
+<<<<<<< HEAD
       .replace(/@\S+/g, '')
+=======
+      .replace(/@\S+/g, '')  // Strip bot mentions
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       .trim()
 
     if (!rawMessage) {
@@ -446,8 +557,15 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       return
     }
 
+<<<<<<< HEAD
     res.status(200).json({})
 
+=======
+    // Respond immediately with acknowledgement (Google Chat expects fast response)
+    res.status(200).json({})
+
+    // Enqueue the task
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     await queue.add('gchat-message', {
       channelType: 'gchat' as const,
       userId,
@@ -457,6 +575,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     })
   })
 
+<<<<<<< HEAD
+=======
+  // ── API Endpoint ──────────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.post('/api/message', async (req: Request, res: Response) => {
     const { userId, message } = req.body as { userId?: string; message?: string }
 
@@ -475,6 +597,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const sendInterim: AgentContext['sendInterim'] = async () => undefined
     const sendFinal: AgentContext['sendFinal'] = async () => {}
 
+<<<<<<< HEAD
     emotionEngine.updateEmotion(userId, message)
     const emotionState = emotionEngine.getOrCreateState(userId)
     const personality = emotionEngine.getPersonality(userId)
@@ -491,6 +614,17 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       )
 
       res.json({ result: emotionalResult.response, emotion: emotionState.primary, mood: emotionState.mood })
+=======
+    const ctx = await compileContext('api', userId, threadId, message, sendInterim, sendFinal)
+
+    try {
+      const result = await runToolLoop(ctx, config)
+      await memory.insertMemory(
+        `User: ${message}\nAssistant: ${result}`,
+        { userId, channelType: 'api' }
+      )
+      res.json({ result })
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('API handler error', { error: msg })
@@ -498,6 +632,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     }
   })
 
+<<<<<<< HEAD
   app.get('/api/emotions/:userId', (req: Request, res: Response) => {
     const { userId } = req.params
     const summary = emotionEngine.getEmotionalSummary(userId)
@@ -508,6 +643,14 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     res.json({ status: 'ok', version: '1.0.0', emotions: 'active' })
   })
 
+=======
+  // ── Health ─────────────────────────────────────────────────────────────────
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', version: '1.0.0' })
+  })
+
+  // ── Error handler ──────────────────────────────────────────────────────────
+>>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     logger.error('Unhandled express error', { error: err.message })
     res.status(500).json({ error: 'Internal error' })
