@@ -41,12 +41,23 @@ async function executeToolWithTimeout(
     return { output: `Unknown tool: ${name}`, isError: true }
   }
 
-  return Promise.race([
-    skill.handler(input, ctx),
-    new Promise<{ output: string; isError: boolean }>((_, reject) =>
-      setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`)), timeoutMs)
-    ),
-  ])
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const result = await Promise.race([
+      skill.handler(input, ctx),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+          reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`))
+        })
+      }),
+    ])
+    return result
+  } finally {
+    clearTimeout(timeoutId)
+    controller.abort() // Ensure cleanup of any lingering handlers
+  }
 }
 
 /** Resolve the API key for the configured LLM provider */
@@ -97,6 +108,7 @@ export async function runToolLoop(
 
   try {
     let rounds = 0
+    let consecutiveErrors = 0
 
     while (rounds < MAX_TOOL_ROUNDS) {
       if (signal?.aborted) throw new Error('Aborted')
@@ -104,14 +116,35 @@ export async function runToolLoop(
 
       logger.info('Tool loop round', { round: rounds, userId: ctx.userId, provider: provider.name })
 
-      const response = await provider.chat({
-        model: config.llmModel,
-        system: systemPrompt,
-        messages,
-        tools: tools.length > 0 ? tools : undefined,
-        maxTokens: 4096,
-        signal,
-      })
+      let response
+      try {
+        response = await provider.chat({
+          model: config.llmModel,
+          system: systemPrompt,
+          messages,
+          tools: tools.length > 0 ? tools : undefined,
+          maxTokens: 4096,
+          signal,
+        })
+        consecutiveErrors = 0
+      } catch (err) {
+        consecutiveErrors++
+        const errMsg = err instanceof Error ? err.message : String(err)
+
+        // Abort signals should propagate immediately
+        if (errMsg === 'Aborted' || signal?.aborted) throw err
+
+        logger.error('LLM call failed', { round: rounds, error: errMsg, consecutiveErrors })
+
+        // Retry up to 2 times on transient LLM errors
+        if (consecutiveErrors <= 2) {
+          logger.info('Retrying LLM call after transient error', { attempt: consecutiveErrors })
+          await new Promise(r => setTimeout(r, 1000 * consecutiveErrors))
+          continue
+        }
+
+        return `I encountered an error communicating with the AI provider: ${errMsg}`
+      }
 
       clearFeedback()
 
@@ -126,8 +159,10 @@ export async function runToolLoop(
         toolCalls: response.toolCalls,
       })
 
-      // Dispatch tool calls in parallel with timeout and retry
+      // Dispatch tool calls sequentially with timeout and retry
       for (const tc of response.toolCalls) {
+        if (signal?.aborted) throw new Error('Aborted')
+
         logger.info('Dispatching tool', { tool: tc.name, input: tc.arguments })
 
         let output: string

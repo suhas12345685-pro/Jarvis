@@ -43,5 +43,7 @@ export async function loadAllSkills(): Promise<void> {
     import('./businessPaymentsRazorpay.js'),
     import('./businessPaymentsPaypal.js'),
     import('./dataAnalysis.js'),
+    import('./webSearch.js'),
+    import('./textTransform.js'),
   ])
 }

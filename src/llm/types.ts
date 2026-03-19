@@ -23,6 +23,13 @@ export interface LLMResponse {
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens'
 }
 
+export interface LLMStreamEvent {
+  type: 'text_delta' | 'tool_call_start' | 'tool_call_delta' | 'tool_call_end' | 'done'
+  text?: string
+  toolCall?: Partial<LLMToolCall> & { id?: string; name?: string }
+  response?: LLMResponse
+}
+
 export interface LLMChatOptions {
   model: string
   system: string
@@ -35,6 +42,7 @@ export interface LLMChatOptions {
 export interface LLMProvider {
   name: string
   chat(opts: LLMChatOptions): Promise<LLMResponse>
+  stream?(opts: LLMChatOptions): AsyncIterable<LLMStreamEvent>
 }
 
 export type LLMProviderName =
