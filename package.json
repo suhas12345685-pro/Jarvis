@@ -53,12 +53,13 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.0",
     "@types/imap-simple": "^4.2.0",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.0",
     "@types/nodemailer": "^6.4.0",
+    "@types/pg": "^8.18.0",
     "@types/supertest": "^6.0.0",
     "@vitest/coverage-v8": "^2.0.0",
     "supertest": "^7.0.0",
