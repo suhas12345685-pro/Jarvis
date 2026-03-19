@@ -1,3 +1,5 @@
+import type { LLMProviderName } from '../llm/types.js'
+
 export type DbMode = 'supabase' | 'sqlite'
 
 export interface ByoakEntry {
@@ -8,6 +10,8 @@ export interface ByoakEntry {
 
 export interface AppConfig {
   anthropicApiKey: string
+  llmProvider: LLMProviderName
+  llmModel: string
   dbMode: DbMode
   supabaseUrl?: string
   supabaseServiceKey?: string

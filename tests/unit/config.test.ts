@@ -6,11 +6,16 @@ describe('config', () => {
     // Clear env
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.DB_MODE
+    delete process.env.LLM_PROVIDER
+    delete process.env.LLM_MODEL
   })
 
-  it('throws descriptively when ANTHROPIC_API_KEY is missing', async () => {
+  it('defaults LLM_PROVIDER to anthropic when not set', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
     const { loadConfig } = await import('../../src/config.js')
-    expect(() => loadConfig()).toThrow('ANTHROPIC_API_KEY')
+    const config = loadConfig()
+    expect(config.llmProvider).toBe('anthropic')
+    expect(config.llmModel).toBe('claude-sonnet-4-6')
   })
 
   it('loads config with minimum required env vars', async () => {
@@ -60,5 +65,14 @@ describe('config', () => {
     expect(getByoakValue(byoak, 'stripe', 'SECRET_KEY')).toBe('sk_test')
     expect(getByoakValue(byoak, 'stripe', 'MISSING')).toBeUndefined()
     expect(getByoakValue(byoak, 'STRIPE', 'secret_key')).toBe('sk_test') // case insensitive
+  })
+
+  it('uses correct default model for each provider', async () => {
+    process.env.LLM_PROVIDER = 'openai'
+    const { loadConfig } = await import('../../src/config.js')
+    const config = loadConfig()
+    expect(config.llmProvider).toBe('openai')
+    expect(config.llmModel).toBe('gpt-4o')
+    delete process.env.LLM_PROVIDER
   })
 })

@@ -1,7 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk'
-import type { AgentContext } from './types/index.js'
-import { getSkill, toAnthropicTools } from './skills/index.js'
+import type { AgentContext, AppConfig } from './types/index.js'
+import type { LLMMessage, LLMToolDefinition } from './llm/types.js'
+import { getProvider } from './llm/registry.js'
+import { getAllDefinitions } from './skills/index.js'
+import { getSkill } from './skills/index.js'
 import { getLogger } from './logger.js'
+import { getByoakValue } from './config.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
@@ -18,6 +21,14 @@ Core directives:
 - If a tool fails, analyze the error and attempt a corrected retry once before reporting failure
 
 You have memory of previous conversations. Use context clues to provide continuity.`
+
+function toLLMTools(): LLMToolDefinition[] {
+  return getAllDefinitions().map(skill => ({
+    name: skill.name,
+    description: skill.description,
+    inputSchema: skill.inputSchema,
+  }))
+}
 
 async function executeToolWithTimeout(
   name: string,
@@ -38,18 +49,32 @@ async function executeToolWithTimeout(
   ])
 }
 
+/** Resolve the API key for the configured LLM provider */
+function resolveApiKey(config: AppConfig): string {
+  if (config.llmProvider === 'anthropic') return config.anthropicApiKey
+  const byoakKey = getByoakValue(config.byoak, config.llmProvider, 'API_KEY')
+  if (byoakKey) return byoakKey
+  if (config.llmProvider === 'ollama') return ''
+  return config.anthropicApiKey // fallback
+}
+
 export async function runToolLoop(
   ctx: AgentContext,
-  apiKey: string,
+  config: AppConfig,
   signal?: AbortSignal
 ): Promise<string> {
   const logger = getLogger()
-  const client = new Anthropic({ apiKey })
-  const tools = toAnthropicTools()
+  const apiKey = resolveApiKey(config)
+  const provider = getProvider({
+    provider: config.llmProvider,
+    model: config.llmModel,
+    apiKey,
+  })
+  const tools = toLLMTools()
 
   const systemPrompt = [SYSTEM_PROMPT_BASE, ctx.systemPrompt].filter(Boolean).join('\n\n')
 
-  const messages: Anthropic.MessageParam[] = [
+  const messages: LLMMessage[] = [
     { role: 'user', content: ctx.rawMessage },
   ]
 
@@ -77,81 +102,69 @@ export async function runToolLoop(
       if (signal?.aborted) throw new Error('Aborted')
       rounds++
 
-      logger.info('Tool loop round', { round: rounds, userId: ctx.userId })
+      logger.info('Tool loop round', { round: rounds, userId: ctx.userId, provider: provider.name })
 
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+      const response = await provider.chat({
+        model: config.llmModel,
         system: systemPrompt,
-        tools: tools.length > 0 ? tools : undefined,
         messages,
+        tools: tools.length > 0 ? tools : undefined,
+        maxTokens: 4096,
+        signal,
       })
 
       clearFeedback()
 
-      // Collect text and tool_use blocks
-      const textBlocks = response.content.filter(b => b.type === 'text')
-      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use')
-
-      if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
-        const finalText = textBlocks.map(b => (b as Anthropic.TextBlock).text).join('\n').trim()
-        return finalText || 'Done.'
+      if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) {
+        return response.text.trim() || 'Done.'
       }
 
-      // Add assistant message
-      messages.push({ role: 'assistant', content: response.content })
+      // Add assistant message with tool calls
+      messages.push({
+        role: 'assistant',
+        content: response.text,
+        toolCalls: response.toolCalls,
+      })
 
       // Dispatch tool calls in parallel with timeout and retry
-      const toolResults = await Promise.all(
-        toolUseBlocks.map(async block => {
-          const tb = block as Anthropic.ToolUseBlock
-          const input = tb.input as Record<string, unknown>
-          logger.info('Dispatching tool', { tool: tb.name, input })
+      for (const tc of response.toolCalls) {
+        logger.info('Dispatching tool', { tool: tc.name, input: tc.arguments })
 
-          try {
-            const result = await executeToolWithTimeout(tb.name, input, ctx)
-            logger.info('Tool result', { tool: tb.name, isError: result.isError })
+        let output: string
+        let isError: boolean
 
-            // Retry once on error with the same input
-            if (result.isError) {
-              logger.info('Tool failed, retrying once', { tool: tb.name })
-              try {
-                const retryResult = await executeToolWithTimeout(tb.name, input, ctx)
-                if (!retryResult.isError) {
-                  logger.info('Tool retry succeeded', { tool: tb.name })
-                  return {
-                    type: 'tool_result' as const,
-                    tool_use_id: tb.id,
-                    content: retryResult.output,
-                    is_error: false,
-                  }
-                }
-              } catch {
-                // Retry failed, fall through to original error
+        try {
+          const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+          output = result.output
+          isError = result.isError
+          logger.info('Tool result', { tool: tc.name, isError })
+
+          // Retry once on error
+          if (isError) {
+            logger.info('Tool failed, retrying once', { tool: tc.name })
+            try {
+              const retryResult = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+              if (!retryResult.isError) {
+                logger.info('Tool retry succeeded', { tool: tc.name })
+                output = retryResult.output
+                isError = false
               }
-            }
-
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: tb.id,
-              content: result.output,
-              is_error: result.isError,
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
-            logger.error('Tool error', { tool: tb.name, error: msg })
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: tb.id,
-              content: `Tool execution error: ${msg}`,
-              is_error: true,
+            } catch {
+              // Retry failed, use original error
             }
           }
-        })
-      )
+        } catch (err) {
+          output = `Tool execution error: ${err instanceof Error ? err.message : String(err)}`
+          isError = true
+          logger.error('Tool error', { tool: tc.name, error: output })
+        }
 
-      // Add tool results as user message
-      messages.push({ role: 'user', content: toolResults })
+        messages.push({
+          role: 'tool',
+          toolCallId: tc.id,
+          content: output,
+        })
+      }
 
       // Send interim update after long tool chains
       if (rounds > 1 && !ctx.interimMessageId) {

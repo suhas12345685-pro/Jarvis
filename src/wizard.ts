@@ -57,6 +57,36 @@ async function main() {
 
   p.intro('🤖  JARVIS Setup Wizard')
 
+  // ── LLM Provider ───────────────────────────────────────────────────────────
+  const llmProvider = await p.select({
+    message: 'Primary LLM provider',
+    options: [
+      { value: 'anthropic', label: 'Anthropic (Claude)' },
+      { value: 'openai', label: 'OpenAI (GPT-4o)' },
+      { value: 'gemini', label: 'Google Gemini' },
+      { value: 'xai', label: 'xAI (Grok)' },
+      { value: 'deepseek', label: 'DeepSeek' },
+      { value: 'moonshot', label: 'Moonshot / Kimi' },
+      { value: 'ollama', label: 'Ollama (local)' },
+      { value: 'meta', label: 'Meta / Llama (via Together AI)' },
+      { value: 'perplexity', label: 'Perplexity AI' },
+    ],
+    initialValue: existing.LLM_PROVIDER ?? 'anthropic',
+  })
+  if (p.isCancel(llmProvider)) { p.cancel('Setup cancelled.'); process.exit(0) }
+  env.LLM_PROVIDER = llmProvider as string
+
+  // Model override (optional)
+  const llmModel = await p.text({
+    message: 'LLM model (leave blank for default)',
+    placeholder: 'e.g. gpt-4o, claude-sonnet-4-6, gemini-2.0-flash',
+    initialValue: existing.LLM_MODEL ?? '',
+  })
+  if (p.isCancel(llmModel)) { p.cancel('Setup cancelled.'); process.exit(0) }
+  if ((llmModel as string).trim()) {
+    env.LLM_MODEL = (llmModel as string).trim()
+  }
+
   // ── DB Mode ───────────────────────────────────────────────────────────────
   const dbMode = await p.select({
     message: 'Database mode',
@@ -88,29 +118,47 @@ async function main() {
     env.SQLITE_PATH = existing.SQLITE_PATH ?? '~/.jarvis/jarvis.db'
   }
 
-  // ── Anthropic ─────────────────────────────────────────────────────────────
-  const anthropicSpin = p.spinner()
-  let anthropicKey = existing.ANTHROPIC_API_KEY ?? ''
+  // ── LLM API Key ────────────────────────────────────────────────────────────
+  if (llmProvider === 'anthropic') {
+    const anthropicSpin = p.spinner()
+    let anthropicKey = existing.ANTHROPIC_API_KEY ?? ''
 
-  while (true) {
-    const key = await p.password({
-      message: `Anthropic API key${anthropicKey ? ' (press Enter to keep existing)' : ''}`,
-    })
-    if (p.isCancel(key)) { p.cancel('Setup cancelled.'); process.exit(0) }
-    const input = (key as string).trim()
-    const finalKey = input || anthropicKey
+    while (true) {
+      const key = await p.password({
+        message: `Anthropic API key${anthropicKey ? ' (press Enter to keep existing)' : ''}`,
+      })
+      if (p.isCancel(key)) { p.cancel('Setup cancelled.'); process.exit(0) }
+      const input = (key as string).trim()
+      const finalKey = input || anthropicKey
 
-    if (!finalKey) { p.log.error('Anthropic API key is required'); continue }
+      if (!finalKey) { p.log.error('Anthropic API key is required'); continue }
 
-    anthropicSpin.start('Validating Anthropic key…')
-    const valid = await validateAnthropicKey(finalKey)
-    if (valid) {
-      anthropicSpin.stop('Anthropic key validated ✓')
-      env.ANTHROPIC_API_KEY = finalKey
-      break
-    } else {
-      anthropicSpin.stop('Invalid key — please try again')
+      anthropicSpin.start('Validating Anthropic key…')
+      const valid = await validateAnthropicKey(finalKey)
+      if (valid) {
+        anthropicSpin.stop('Anthropic key validated ✓')
+        env.ANTHROPIC_API_KEY = finalKey
+        break
+      } else {
+        anthropicSpin.stop('Invalid key — please try again')
+      }
     }
+  } else if (llmProvider !== 'ollama') {
+    // For non-Anthropic, non-Ollama providers, collect their API key
+    const providerNames: Record<string, string> = {
+      openai: 'OpenAI', gemini: 'Google Gemini', xai: 'xAI',
+      deepseek: 'DeepSeek', moonshot: 'Moonshot', meta: 'Together AI (Meta)',
+      perplexity: 'Perplexity',
+    }
+    const providerLabel = providerNames[llmProvider as string] ?? llmProvider
+    const byoakEnvKey = `BYOAK_${(llmProvider as string).toUpperCase()}_API_KEY`
+
+    const apiKey = await p.password({
+      message: `${providerLabel} API key`,
+    })
+    if (p.isCancel(apiKey)) { p.cancel('Setup cancelled.'); process.exit(0) }
+    const v = (apiKey as string).trim()
+    if (v) env[byoakEnvKey] = v
   }
 
   // ── Redis ─────────────────────────────────────────────────────────────────
@@ -127,7 +175,7 @@ async function main() {
 
   // ── BYOAK keys ────────────────────────────────────────────────────────────
   const addByoak = await p.confirm({
-    message: 'Configure optional integration keys (Slack, Telegram, Stripe, etc.)?',
+    message: 'Configure optional integration keys (channels, payments, etc.)?',
     initialValue: true,
   })
   if (!p.isCancel(addByoak) && addByoak) {
@@ -147,6 +195,7 @@ async function configureByoak(
   existing: Record<string, string>
 ): Promise<void> {
   const services = [
+    // ── Channels ──────────────────────────────────────────────────────
     {
       name: 'Slack',
       keys: [
@@ -163,6 +212,20 @@ async function configureByoak(
       ],
     },
     {
+      name: 'Discord',
+      keys: [
+        { env: 'BYOAK_DISCORD_BOT_TOKEN', label: 'Bot token' },
+        { env: 'BYOAK_DISCORD_APPLICATION_ID', label: 'Application ID' },
+      ],
+    },
+    {
+      name: 'Google Chat',
+      keys: [
+        { env: 'BYOAK_GCHAT_SERVICE_ACCOUNT_KEY', label: 'Service account JSON key (paste JSON or file path)' },
+      ],
+    },
+    // ── Voice ─────────────────────────────────────────────────────────
+    {
       name: 'LiveKit (Voice)',
       keys: [
         { env: 'BYOAK_LIVEKIT_URL', label: 'LiveKit server URL (wss://...)' },
@@ -170,6 +233,7 @@ async function configureByoak(
         { env: 'BYOAK_LIVEKIT_API_SECRET', label: 'API secret' },
       ],
     },
+    // ── Email & Calendar ──────────────────────────────────────────────
     {
       name: 'Email (SMTP/IMAP)',
       keys: [
@@ -190,10 +254,55 @@ async function configureByoak(
         { env: 'BYOAK_GCAL_REFRESH_TOKEN', label: 'Refresh token', password: true },
       ],
     },
+    // ── LLM API Keys (additional providers) ───────────────────────────
+    {
+      name: 'OpenAI',
+      keys: [{ env: 'BYOAK_OPENAI_API_KEY', label: 'API key (sk-...)' }],
+    },
+    {
+      name: 'Google Gemini',
+      keys: [{ env: 'BYOAK_GEMINI_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'xAI (Grok)',
+      keys: [{ env: 'BYOAK_XAI_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'DeepSeek',
+      keys: [{ env: 'BYOAK_DEEPSEEK_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'Moonshot / Kimi',
+      keys: [{ env: 'BYOAK_MOONSHOT_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'Perplexity AI',
+      keys: [{ env: 'BYOAK_PERPLEXITY_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'Meta / Llama (Together AI)',
+      keys: [{ env: 'BYOAK_META_API_KEY', label: 'Together AI API key' }],
+    },
+    // ── Payments ──────────────────────────────────────────────────────
     {
       name: 'Stripe',
       keys: [
         { env: 'BYOAK_STRIPE_SECRET_KEY', label: 'Secret key (sk_live_... or sk_test_...)', password: true, validate: validateStripeKey },
+      ],
+    },
+    {
+      name: 'Razorpay',
+      keys: [
+        { env: 'BYOAK_RAZORPAY_KEY_ID', label: 'Key ID (rzp_...)' },
+        { env: 'BYOAK_RAZORPAY_KEY_SECRET', label: 'Key Secret', password: true },
+      ],
+    },
+    {
+      name: 'PayPal',
+      keys: [
+        { env: 'BYOAK_PAYPAL_CLIENT_ID', label: 'Client ID' },
+        { env: 'BYOAK_PAYPAL_CLIENT_SECRET', label: 'Client Secret', password: true },
+        { env: 'BYOAK_PAYPAL_ENVIRONMENT', label: 'Environment (sandbox or live)' },
       ],
     },
   ]

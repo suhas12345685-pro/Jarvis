@@ -1,6 +1,6 @@
 import type { ByoakEntry } from './config.js'
 
-export type ChannelType = 'slack' | 'telegram' | 'voice' | 'api'
+export type ChannelType = 'slack' | 'telegram' | 'voice' | 'api' | 'discord' | 'gchat'
 
 export interface Memory {
   id: string

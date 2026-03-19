@@ -5,6 +5,7 @@ import { createLogger, registerByoakValues } from './logger.js'
 import { createMemoryLayer } from './memoryLayer.js'
 import { createRouter } from './router.js'
 import { startVoiceEngine } from './voiceEngine.js'
+import { startDiscordClient } from './channels/discord.js'
 import { loadAllSkills } from './skills/index.js'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
@@ -23,7 +24,12 @@ async function main() {
   // Register BYOAK values with PII scrubber
   registerByoakValues(config.byoak.map(e => e.value))
 
-  logger.info('JARVIS starting', { dbMode: config.dbMode, port: config.port })
+  logger.info('JARVIS starting', {
+    dbMode: config.dbMode,
+    port: config.port,
+    llmProvider: config.llmProvider,
+    llmModel: config.llmModel,
+  })
 
   // Initialize memory layer
   const memory = await createMemoryLayer(config)
@@ -33,11 +39,14 @@ async function main() {
   await loadAllSkills()
   logger.info('Skills loaded')
 
-  // Start HTTP router
-  const { app } = createRouter(config, memory)
+  // Start HTTP router (handles Slack, Telegram, Google Chat webhooks + API)
+  const { app, queue } = createRouter(config, memory)
   const server = app.listen(config.port, () => {
     logger.info(`JARVIS listening on port ${config.port}`)
   })
+
+  // Start Discord client (WebSocket, no-op if not configured)
+  await startDiscordClient(config, memory, queue)
 
   // Start voice engine (no-op if LiveKit not configured)
   await startVoiceEngine(config, memory)
