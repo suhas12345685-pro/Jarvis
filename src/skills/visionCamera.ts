@@ -72,7 +72,6 @@ registerSkill({
       return { output: `Camera error: ${(err as Error).message}`, isError: true }
     } finally {
       await unlink(tmpPath).catch(() => {})
-      await unlink(tmpPath.replace('.jpg', '.jpg')).catch(() => {})
     }
   },
 })

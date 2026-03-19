@@ -71,13 +71,15 @@ registerSkill({
       return { output: 'Email not configured: missing BYOAK_EMAIL_IMAP_* credentials', isError: true }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let connection: any = null
     try {
       const imapSimple = await import('imap-simple')
-      const connection = await imapSimple.default.connect({
+      connection = await (imapSimple.default.connect as Function)({
         imap: {
           host, port: 993, tls: true,
           authTimeout: 10000,
-          auth: { user, pass },
+          user, password: pass,
         },
       })
 
@@ -92,7 +94,8 @@ registerSkill({
         markSeen: false,
       })
 
-      const results = messages.slice(-limit).map(msg => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const results = messages.slice(-limit).map((msg: any) => {
         const header = msg.parts.find((p: { which: string }) => p.which === 'HEADER.FIELDS (FROM TO SUBJECT DATE)')
         const text = msg.parts.find((p: { which: string }) => p.which === 'TEXT')
         const h = header?.body as Record<string, string[]>
@@ -110,6 +113,8 @@ ${(text?.body as string)?.slice(0, 500) ?? ''}
         isError: false,
       }
     } catch (err) {
+      // Ensure IMAP connection is cleaned up on error
+      try { connection?.end?.() } catch { /* ignore */ }
       return { output: `Email read error: ${(err as Error).message}`, isError: true }
     }
   },

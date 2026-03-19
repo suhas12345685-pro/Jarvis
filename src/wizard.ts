@@ -30,7 +30,11 @@ function buildEnvFile(values: Record<string, string>): string {
 async function validateAnthropicKey(key: string): Promise<boolean> {
   try {
     const client = new Anthropic({ apiKey: key })
-    await client.models.list()
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+    })
     return true
   } catch {
     return false
@@ -214,10 +218,10 @@ async function configureByoak(
       const v = (value as string).trim()
       if (!v) continue
 
-      if (keyDef.validate) {
+      if ('validate' in keyDef && typeof keyDef.validate === 'function') {
         const spin = p.spinner()
         spin.start(`Validating ${service.name} key…`)
-        const ok = await keyDef.validate(v)
+        const ok = await (keyDef.validate as (k: string) => Promise<boolean>)(v)
         spin.stop(ok ? `${service.name} key validated ✓` : `${service.name} key invalid — saved anyway`)
       }
 

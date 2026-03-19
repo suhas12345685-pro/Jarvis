@@ -10,13 +10,40 @@ import { getLogger } from './logger.js'
 export const jarvisEvents = new EventEmitter()
 
 interface AgentJob {
-  ctx: Omit<AgentContext, 'sendInterim' | 'sendFinal'>
+  channelType: AgentContext['channelType']
+  userId: string
+  threadId: string
+  rawMessage: string
   channelPayload: Record<string, unknown>
+}
+
+// ── Simple per-user rate limiter ───────────────────────────────────────────────
+
+class RateLimiter {
+  private requests = new Map<string, number[]>()
+  private readonly windowMs: number
+  private readonly maxRequests: number
+
+  constructor(windowMs = 60_000, maxRequests = 20) {
+    this.windowMs = windowMs
+    this.maxRequests = maxRequests
+  }
+
+  isAllowed(key: string): boolean {
+    const now = Date.now()
+    const timestamps = this.requests.get(key) ?? []
+    const recent = timestamps.filter(t => now - t < this.windowMs)
+    if (recent.length >= this.maxRequests) return false
+    recent.push(now)
+    this.requests.set(key, recent)
+    return true
+  }
 }
 
 export function createRouter(config: AppConfig, memory: MemoryLayer) {
   const app = express()
   const logger = getLogger()
+  const rateLimiter = new RateLimiter()
 
   // ── Queue ─────────────────────────────────────────────────────────────────
   const queue = new Queue<AgentJob>('agent-tasks', {
@@ -26,34 +53,32 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   const worker = new Worker<AgentJob>(
     'agent-tasks',
     async (job: Job<AgentJob>) => {
-      const { ctx: ctxData } = job.data
+      const { channelType, userId, threadId, rawMessage, channelPayload } = job.data
 
-      const ctx: AgentContext = {
-        ...ctxData,
-        sendInterim: async (msg: string) => {
-          jarvisEvents.emit('interim', { threadId: ctxData.threadId, message: msg })
-          return undefined
-        },
-        sendFinal: async (msg: string) => {
-          jarvisEvents.emit('final', { threadId: ctxData.threadId, message: msg })
-        },
-      }
+      // Build channel-specific send functions from payload
+      const { sendInterim, sendFinal } = await buildChannelCallbacks(
+        channelType, channelPayload, config
+      )
 
-      jarvisEvents.emit('task:start', { userId: ctx.userId, threadId: ctx.threadId })
+      const ctx = await compileContext(
+        channelType, userId, threadId, rawMessage, sendInterim, sendFinal
+      )
+
+      jarvisEvents.emit('task:start', { userId, threadId })
 
       try {
         const result = await runToolLoop(ctx, config.anthropicApiKey)
-        await ctx.sendFinal(result, ctx.interimMessageId)
+        await sendFinal(result, ctx.interimMessageId)
         await memory.insertMemory(
-          `User: ${ctx.rawMessage}\nAssistant: ${result}`,
-          { userId: ctx.userId, channelType: ctx.channelType }
+          `User: ${rawMessage}\nAssistant: ${result}`,
+          { userId, channelType }
         )
-        jarvisEvents.emit('task:complete', { userId: ctx.userId, result })
+        jarvisEvents.emit('task:complete', { userId, result })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        logger.error('Task failed', { userId: ctx.userId, error: msg })
-        jarvisEvents.emit('task:error', { userId: ctx.userId, error: msg })
-        await ctx.sendFinal(`Sorry, I encountered an error: ${msg}`)
+        logger.error('Task failed', { userId, error: msg })
+        jarvisEvents.emit('task:error', { userId, error: msg })
+        await sendFinal(`Sorry, I encountered an error: ${msg}`)
       }
     },
     { connection: { url: config.redisUrl }, concurrency: 5 }
@@ -62,6 +87,78 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   worker.on('failed', (job, err) => {
     logger.error('Worker job failed', { jobId: job?.id, error: err.message })
   })
+
+  // ── Channel callback builder ────────────────────────────────────────────
+
+  async function buildChannelCallbacks(
+    channelType: AgentContext['channelType'],
+    payload: Record<string, unknown>,
+    cfg: AppConfig
+  ): Promise<{ sendInterim: AgentContext['sendInterim']; sendFinal: AgentContext['sendFinal'] }> {
+    if (channelType === 'slack') {
+      const { WebClient } = await import('@slack/web-api')
+      const botToken = cfg.byoak.find(e => e.service === 'slack' && e.keyName === 'BOT_TOKEN')?.value
+      const slackClient = botToken ? new WebClient(botToken) : null
+      const channel = payload.channel as string
+      const threadTs = payload.threadId as string
+
+      return {
+        sendInterim: async (msg: string) => {
+          if (!slackClient) return undefined
+          const r = await slackClient.chat.postMessage({ channel, thread_ts: threadTs, text: msg })
+          return r.ts as string
+        },
+        sendFinal: async (msg: string, interimId?: string) => {
+          if (!slackClient) return
+          if (interimId) {
+            await slackClient.chat.update({ channel, ts: interimId, text: msg }).catch(() => {
+              slackClient.chat.postMessage({ channel, thread_ts: threadTs, text: msg })
+            })
+          } else {
+            await slackClient.chat.postMessage({ channel, thread_ts: threadTs, text: msg })
+          }
+        },
+      }
+    }
+
+    if (channelType === 'telegram') {
+      const botToken = cfg.byoak.find(e => e.service === 'telegram' && e.keyName === 'BOT_TOKEN')?.value
+      const { Bot } = await import('grammy')
+      const bot = botToken ? new Bot(botToken) : null
+      const chatId = payload.chatId as string
+      let interimMsgId: number | undefined
+
+      return {
+        sendInterim: async (msg: string) => {
+          if (!bot) return undefined
+          const m = await bot.api.sendMessage(chatId, msg)
+          interimMsgId = m.message_id
+          return String(m.message_id)
+        },
+        sendFinal: async (msg: string) => {
+          if (!bot) return
+          if (interimMsgId) {
+            await bot.api.editMessageText(chatId, interimMsgId, msg).catch(() => {
+              bot.api.sendMessage(chatId, msg)
+            })
+          } else {
+            await bot.api.sendMessage(chatId, msg)
+          }
+        },
+      }
+    }
+
+    // Default for API channel — collect responses via events
+    return {
+      sendInterim: async (msg: string) => {
+        jarvisEvents.emit('interim', { message: msg })
+        return undefined
+      },
+      sendFinal: async (msg: string) => {
+        jarvisEvents.emit('final', { message: msg })
+      },
+    }
+  }
 
   // ── Middleware ─────────────────────────────────────────────────────────────
   // Raw body for HMAC, parsed JSON for everything else
@@ -146,38 +243,21 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const channel = event.channel as string
     const rawMessage = (event.text as string).replace(/<@[A-Z0-9]+>/g, '').trim()
 
+    // Rate limit check
+    if (!rateLimiter.isAllowed(userId)) {
+      res.status(429).json({ error: 'Rate limit exceeded' })
+      return
+    }
+
     res.status(200).end()
 
-    const { WebClient } = await import('@slack/web-api')
-    const botToken = config.byoak.find(e => e.service === 'slack' && e.keyName === 'BOT_TOKEN')?.value
-    const slackClient = botToken ? new WebClient(botToken) : null
-
-    const sendInterim: AgentContext['sendInterim'] = async (msg: string) => {
-      if (!slackClient) return undefined
-      const r = await slackClient.chat.postMessage({ channel, thread_ts: threadId, text: msg })
-      return r.ts as string
-    }
-
-    const sendFinal: AgentContext['sendFinal'] = async (msg: string, interimId?: string) => {
-      if (!slackClient) return
-      if (interimId) {
-        await slackClient.chat.update({ channel, ts: interimId, text: msg }).catch(() => {
-          slackClient.chat.postMessage({ channel, thread_ts: threadId, text: msg })
-        })
-      } else {
-        await slackClient.chat.postMessage({ channel, thread_ts: threadId, text: msg })
-      }
-    }
-
-    const ctx = await compileContext('slack', userId, threadId, rawMessage, sendInterim, sendFinal)
-    await queue.add('slack-message', { ctx: { ...ctx, sendInterim: undefined as unknown as AgentContext['sendInterim'], sendFinal: undefined as unknown as AgentContext['sendFinal'] }, channelPayload: { channel, threadId } })
-
-    // For in-process handling (simpler), run directly if not using queue
-    await runToolLoop(ctx, config.anthropicApiKey).then(
-      result => sendFinal(result, ctx.interimMessageId)
-    ).catch(err => {
-      logger.error('Slack handler error', { error: err })
-      sendFinal('Sorry, something went wrong.')
+    // Enqueue the task — worker handles execution
+    await queue.add('slack-message', {
+      channelType: 'slack',
+      userId,
+      threadId,
+      rawMessage,
+      channelPayload: { channel, threadId },
     })
   })
 
@@ -200,39 +280,57 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const threadId = String(message.message_id)
     const rawMessage = message.text as string
 
+    // Rate limit check
+    if (!rateLimiter.isAllowed(userId)) {
+      res.status(429).json({ error: 'Rate limit exceeded' })
+      return
+    }
+
     res.status(200).end()
 
-    const botToken = config.byoak.find(e => e.service === 'telegram' && e.keyName === 'BOT_TOKEN')?.value
-    const { Bot } = await import('grammy')
-    const bot = botToken ? new Bot(botToken) : null
-
-    let interimMsgId: number | undefined
-
-    const sendInterim: AgentContext['sendInterim'] = async (msg: string) => {
-      if (!bot) return undefined
-      const m = await bot.api.sendMessage(chatId, msg)
-      interimMsgId = m.message_id
-      return String(m.message_id)
-    }
-
-    const sendFinal: AgentContext['sendFinal'] = async (msg: string) => {
-      if (!bot) return
-      if (interimMsgId) {
-        await bot.api.editMessageText(chatId, interimMsgId, msg).catch(() => {
-          bot.api.sendMessage(chatId, msg)
-        })
-      } else {
-        await bot.api.sendMessage(chatId, msg)
-      }
-    }
-
-    const ctx = await compileContext('telegram', userId, threadId, rawMessage, sendInterim, sendFinal)
-    await runToolLoop(ctx, config.anthropicApiKey).then(
-      result => sendFinal(result, ctx.interimMessageId)
-    ).catch(err => {
-      logger.error('Telegram handler error', { error: err })
-      sendFinal('Sorry, something went wrong.')
+    // Enqueue the task — worker handles execution
+    await queue.add('telegram-message', {
+      channelType: 'telegram',
+      userId,
+      threadId,
+      rawMessage,
+      channelPayload: { chatId },
     })
+  })
+
+  // ── API Endpoint ──────────────────────────────────────────────────────────
+  app.post('/api/message', async (req: Request, res: Response) => {
+    const { userId, message } = req.body as { userId?: string; message?: string }
+
+    if (!userId || !message) {
+      res.status(400).json({ error: 'userId and message are required' })
+      return
+    }
+
+    if (!rateLimiter.isAllowed(userId)) {
+      res.status(429).json({ error: 'Rate limit exceeded' })
+      return
+    }
+
+    const threadId = `api-${Date.now()}`
+
+    const sendInterim: AgentContext['sendInterim'] = async () => undefined
+    const sendFinal: AgentContext['sendFinal'] = async () => {}
+
+    const ctx = await compileContext('api', userId, threadId, message, sendInterim, sendFinal)
+
+    try {
+      const result = await runToolLoop(ctx, config.anthropicApiKey)
+      await memory.insertMemory(
+        `User: ${message}\nAssistant: ${result}`,
+        { userId, channelType: 'api' }
+      )
+      res.json({ result })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.error('API handler error', { error: msg })
+      res.status(500).json({ error: msg })
+    }
   })
 
   // ── Health ─────────────────────────────────────────────────────────────────
