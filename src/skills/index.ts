@@ -1,0 +1,43 @@
+import type { SkillDefinition } from '../types/index.js'
+import type Anthropic from '@anthropic-ai/sdk'
+
+const registry = new Map<string, SkillDefinition>()
+
+export function registerSkill(def: SkillDefinition): void {
+  registry.set(def.name, def)
+}
+
+export function getSkill(name: string): SkillDefinition | undefined {
+  return registry.get(name)
+}
+
+export function getAllDefinitions(): SkillDefinition[] {
+  return Array.from(registry.values())
+}
+
+/** Convert SkillDefinition[] to the Anthropic SDK tools array format */
+export function toAnthropicTools(): Anthropic.Tool[] {
+  return getAllDefinitions().map(skill => ({
+    name: skill.name,
+    description: skill.description,
+    input_schema: skill.inputSchema as Anthropic.Tool['input_schema'],
+  }))
+}
+
+// Auto-register all skills by importing them
+export async function loadAllSkills(): Promise<void> {
+  await Promise.all([
+    import('./osTerminal.js'),
+    import('./cronHeartbeat.js'),
+    import('./localFileOps.js'),
+    import('./visionScreen.js'),
+    import('./visionCamera.js'),
+    import('./headlessBrowser.js'),
+    import('./apiFetcher.js'),
+    import('./commsEmail.js'),
+    import('./commsChannels.js'),
+    import('./commsCalendar.js'),
+    import('./businessPayments.js'),
+    import('./dataAnalysis.js'),
+  ])
+}
