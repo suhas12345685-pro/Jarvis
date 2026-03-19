@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AgentContext } from '../../src/types/index.js'
+import type { AgentContext, AppConfig } from '../../src/types/index.js'
 
 const mockCreate = vi.fn()
 
@@ -10,7 +10,8 @@ vi.mock('@anthropic-ai/sdk', () => ({
 }))
 
 vi.mock('../../src/skills/index.js', () => ({
-  toAnthropicTools: () => [],
+  toLLMTools: () => [],
+  getAllDefinitions: () => [],
   getSkill: vi.fn().mockReturnValue({
     name: 'test_tool',
     handler: vi.fn().mockResolvedValue({ output: 'tool result', isError: false }),
@@ -35,6 +36,18 @@ const makeCtx = (): AgentContext & { interim: string[]; final: string[] } => {
   }
 }
 
+const makeConfig = (): AppConfig => ({
+  anthropicApiKey: 'sk-ant-test',
+  llmProvider: 'anthropic',
+  llmModel: 'claude-sonnet-4-6',
+  dbMode: 'sqlite',
+  sqlitePath: '/tmp/test.db',
+  redisUrl: 'redis://localhost:6379',
+  port: 3000,
+  logPath: '/tmp/test.log',
+  byoak: [],
+})
+
 describe('toolCaller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -48,7 +61,7 @@ describe('toolCaller', () => {
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
     const ctx = makeCtx()
-    const result = await runToolLoop(ctx, 'sk-ant-test')
+    const result = await runToolLoop(ctx, makeConfig())
     expect(result).toBe('Hello, how can I help?')
   })
 
@@ -65,7 +78,7 @@ describe('toolCaller', () => {
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
     const ctx = makeCtx()
-    const result = await runToolLoop(ctx, 'sk-ant-test')
+    const result = await runToolLoop(ctx, makeConfig())
     expect(result).toBe('Done using tool.')
   })
 
@@ -75,7 +88,7 @@ describe('toolCaller', () => {
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
     const ctx = makeCtx()
-    await expect(runToolLoop(ctx, 'sk-ant-test', controller.signal)).rejects.toThrow('Aborted')
+    await expect(runToolLoop(ctx, makeConfig(), controller.signal)).rejects.toThrow('Aborted')
   })
 
   it('returns fallback text on empty response', async () => {
@@ -86,7 +99,7 @@ describe('toolCaller', () => {
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
     const ctx = makeCtx()
-    const result = await runToolLoop(ctx, 'sk-ant-test')
+    const result = await runToolLoop(ctx, makeConfig())
     expect(result).toBe('Done.')
   })
 })

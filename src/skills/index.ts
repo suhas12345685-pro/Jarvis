@@ -1,5 +1,5 @@
 import type { SkillDefinition } from '../types/index.js'
-import type Anthropic from '@anthropic-ai/sdk'
+import type { LLMToolDefinition } from '../llm/types.js'
 
 const registry = new Map<string, SkillDefinition>()
 
@@ -15,12 +15,12 @@ export function getAllDefinitions(): SkillDefinition[] {
   return Array.from(registry.values())
 }
 
-/** Convert SkillDefinition[] to the Anthropic SDK tools array format */
-export function toAnthropicTools(): Anthropic.Tool[] {
+/** Convert SkillDefinition[] to the LLM-agnostic tool definition format */
+export function toLLMTools(): LLMToolDefinition[] {
   return getAllDefinitions().map(skill => ({
     name: skill.name,
     description: skill.description,
-    input_schema: skill.inputSchema as Anthropic.Tool['input_schema'],
+    inputSchema: skill.inputSchema,
   }))
 }
 
@@ -37,7 +37,11 @@ export async function loadAllSkills(): Promise<void> {
     import('./commsEmail.js'),
     import('./commsChannels.js'),
     import('./commsCalendar.js'),
+    import('./commsDiscord.js'),
+    import('./commsGChat.js'),
     import('./businessPayments.js'),
+    import('./businessPaymentsRazorpay.js'),
+    import('./businessPaymentsPaypal.js'),
     import('./dataAnalysis.js'),
   ])
 }

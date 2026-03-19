@@ -67,7 +67,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       jarvisEvents.emit('task:start', { userId, threadId })
 
       try {
-        const result = await runToolLoop(ctx, config.anthropicApiKey)
+        const result = await runToolLoop(ctx, config)
         await sendFinal(result, ctx.interimMessageId)
         await memory.insertMemory(
           `User: ${rawMessage}\nAssistant: ${result}`,
@@ -143,6 +143,91 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
             })
           } else {
             await bot.api.sendMessage(chatId, msg)
+          }
+        },
+      }
+    }
+
+    if (channelType === 'discord') {
+      const { getDiscordClient } = await import('./channels/discord.js')
+      const client = getDiscordClient()
+      const channelId = payload.channelId as string
+      let interimMsgRef: { id: string } | undefined
+
+      return {
+        sendInterim: async (msg: string) => {
+          if (!client) return undefined
+          const ch = await client.channels.fetch(channelId)
+          if (ch?.isTextBased()) {
+            const sent = await (ch as unknown as { send: (m: string) => Promise<{ id: string }> }).send(msg)
+            interimMsgRef = sent
+            return sent.id
+          }
+          return undefined
+        },
+        sendFinal: async (msg: string) => {
+          if (!client) return
+          const ch = await client.channels.fetch(channelId)
+          if (!ch?.isTextBased()) return
+          const textCh = ch as unknown as { messages: { fetch: (id: string) => Promise<{ edit: (m: string) => Promise<void> }> }; send: (m: string) => Promise<void> }
+          if (interimMsgRef) {
+            await textCh.messages.fetch(interimMsgRef.id).then(m => m.edit(msg)).catch(() => {
+              textCh.send(msg)
+            })
+          } else {
+            await textCh.send(msg)
+          }
+        },
+      }
+    }
+
+    if (channelType === 'gchat') {
+      const spaceName = payload.spaceName as string
+      const { google } = await import('googleapis')
+      const serviceAccountKey = cfg.byoak.find(e => e.service === 'gchat' && e.keyName === 'SERVICE_ACCOUNT_KEY')?.value
+
+      const getChat = async () => {
+        if (!serviceAccountKey) return null
+        let creds: Record<string, string>
+        try {
+          creds = JSON.parse(serviceAccountKey) as Record<string, string>
+        } catch {
+          const { readFileSync } = await import('fs')
+          creds = JSON.parse(readFileSync(serviceAccountKey, 'utf-8')) as Record<string, string>
+        }
+        const auth = new google.auth.GoogleAuth({
+          credentials: creds,
+          scopes: ['https://www.googleapis.com/auth/chat.bot'],
+        })
+        return google.chat({ version: 'v1', auth })
+      }
+
+      let interimMessageName: string | undefined
+
+      return {
+        sendInterim: async (msg: string) => {
+          const chat = await getChat()
+          if (!chat) return undefined
+          const res = await chat.spaces.messages.create({
+            parent: spaceName,
+            requestBody: { text: msg },
+          })
+          interimMessageName = res.data.name ?? undefined
+          return interimMessageName
+        },
+        sendFinal: async (msg: string) => {
+          const chat = await getChat()
+          if (!chat) return
+          if (interimMessageName) {
+            await chat.spaces.messages.update({
+              name: interimMessageName,
+              updateMask: 'text',
+              requestBody: { text: msg },
+            }).catch(() => {
+              chat.spaces.messages.create({ parent: spaceName, requestBody: { text: msg } })
+            })
+          } else {
+            await chat.spaces.messages.create({ parent: spaceName, requestBody: { text: msg } })
           }
         },
       }
@@ -298,6 +383,56 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     })
   })
 
+  // ── Google Chat Webhook ──────────────────────────────────────────────────
+  app.post('/webhooks/gchat', async (req: Request, res: Response) => {
+    const body = req.body as Record<string, unknown>
+    const msgType = body.type as string | undefined
+
+    // Google Chat sends various event types
+    if (msgType !== 'MESSAGE') {
+      res.status(200).json({})
+      return
+    }
+
+    const message = body.message as Record<string, unknown> | undefined
+    const sender = body.user as Record<string, unknown> | undefined
+    const space = body.space as Record<string, unknown> | undefined
+
+    if (!message?.text || !sender || !space) {
+      res.status(200).json({})
+      return
+    }
+
+    const userId = String(sender.name ?? sender.displayName ?? 'gchat-user')
+    const spaceName = String(space.name)
+    const threadId = String((message.thread as Record<string, unknown>)?.name ?? spaceName)
+    const rawMessage = (message.text as string)
+      .replace(/@\S+/g, '')  // Strip bot mentions
+      .trim()
+
+    if (!rawMessage) {
+      res.status(200).json({})
+      return
+    }
+
+    if (!rateLimiter.isAllowed(userId)) {
+      res.status(200).json({ text: 'Rate limit exceeded. Please wait a moment.' })
+      return
+    }
+
+    // Respond immediately with acknowledgement (Google Chat expects fast response)
+    res.status(200).json({})
+
+    // Enqueue the task
+    await queue.add('gchat-message', {
+      channelType: 'gchat' as const,
+      userId,
+      threadId,
+      rawMessage,
+      channelPayload: { spaceName, threadName: threadId },
+    })
+  })
+
   // ── API Endpoint ──────────────────────────────────────────────────────────
   app.post('/api/message', async (req: Request, res: Response) => {
     const { userId, message } = req.body as { userId?: string; message?: string }
@@ -320,7 +455,7 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     const ctx = await compileContext('api', userId, threadId, message, sendInterim, sendFinal)
 
     try {
-      const result = await runToolLoop(ctx, config.anthropicApiKey)
+      const result = await runToolLoop(ctx, config)
       await memory.insertMemory(
         `User: ${message}\nAssistant: ${result}`,
         { userId, channelType: 'api' }
