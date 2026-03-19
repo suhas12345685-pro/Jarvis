@@ -5,6 +5,7 @@ import { getAllDefinitions } from './skills/index.js'
 import { getSkill } from './skills/index.js'
 import { getLogger } from './logger.js'
 import { getByoakValue } from './config.js'
+import { autoGenerateSkill } from './autoSkillGenerator.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
@@ -34,9 +35,20 @@ async function executeToolWithTimeout(
   name: string,
   input: Record<string, unknown>,
   ctx: AgentContext,
-  timeoutMs: number = TOOL_TIMEOUT_MS
+  timeoutMs: number = TOOL_TIMEOUT_MS,
+  config?: AppConfig
 ): Promise<{ output: string; isError: boolean }> {
-  const skill = getSkill(name)
+  let skill = getSkill(name)
+  if (!skill && config) {
+    // Auto-generate the missing skill on the fly
+    const logger = getLogger()
+    logger.info('Unknown tool requested, attempting auto-generation', { name })
+    const generated = await autoGenerateSkill(config, name, input)
+    if (generated) {
+      skill = getSkill(name)
+      logger.info('Auto-generated skill available, executing', { name })
+    }
+  }
   if (!skill) {
     return { output: `Unknown tool: ${name}`, isError: true }
   }
@@ -169,7 +181,7 @@ export async function runToolLoop(
         let isError: boolean
 
         try {
-          const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+          const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
           output = result.output
           isError = result.isError
           logger.info('Tool result', { tool: tc.name, isError })
@@ -178,7 +190,7 @@ export async function runToolLoop(
           if (isError) {
             logger.info('Tool failed, retrying once', { tool: tc.name })
             try {
-              const retryResult = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+              const retryResult = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
               if (!retryResult.isError) {
                 logger.info('Tool retry succeeded', { tool: tc.name })
                 output = retryResult.output
@@ -307,13 +319,13 @@ export async function runStreamingToolLoop(
       let isError: boolean
 
       try {
-        const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+        const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
         output = result.output
         isError = result.isError
 
         if (isError) {
           try {
-            const retry = await executeToolWithTimeout(tc.name, tc.arguments, ctx)
+            const retry = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
             if (!retry.isError) { output = retry.output; isError = false }
           } catch { /* retry failed */ }
         }

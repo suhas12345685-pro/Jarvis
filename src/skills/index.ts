@@ -65,9 +65,33 @@ export async function loadAllSkills(): Promise<void> {
     import('./meetingCall.js'),
     // Skill builder (JARVIS creates tools)
     import('./skillBuilder.js'),
+    // Database
+    import('./database.js'),
+    // Cloud storage (S3-compatible)
+    import('./cloudStorage.js'),
+    // Docker container management
+    import('./docker.js'),
+    // PDF processing
+    import('./pdf.js'),
+    // Translation & NLP
+    import('./translate.js'),
+    // Archive management
+    import('./archive.js'),
+    // Network diagnostics
+    import('./network.js'),
+    // Image processing
+    import('./imageOps.js'),
+    // Scheduling & timers
+    import('./scheduler.js'),
+    // Code snippet manager
+    import('./snippet.js'),
   ])
 
   // Load user-created custom skills from disk
   const { loadCustomSkills } = await import('./skillBuilder.js')
   await loadCustomSkills()
+
+  // Load auto-generated skills from disk
+  const { loadAutoSkills } = await import('../autoSkillGenerator.js')
+  await loadAutoSkills()
 }
