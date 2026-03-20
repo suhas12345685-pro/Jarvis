@@ -113,6 +113,12 @@ export class IPRateLimiter {
 
 // ── Input Sanitization ───────────────────────────────────────────────────────
 
+/** Properly escape arguments for shell execution to prevent command injection */
+export function escapeShellArg(arg: string): string {
+  if (!arg) return "''"
+  return `'${String(arg).replace(/'/g, "'\\''")}'`
+}
+
 /** Sanitize strings that might end up in shell commands or SQL */
 export function sanitizeInput(input: string, maxLength = 10_000): string {
   if (input.length > maxLength) {
