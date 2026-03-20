@@ -15,10 +15,7 @@ export function getAllDefinitions(): SkillDefinition[] {
   return Array.from(registry.values())
 }
 
-<<<<<<< HEAD
-=======
 /** Convert SkillDefinition[] to the LLM-agnostic tool definition format */
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 export function toLLMTools(): LLMToolDefinition[] {
   return getAllDefinitions().map(skill => ({
     name: skill.name,
@@ -27,37 +24,77 @@ export function toLLMTools(): LLMToolDefinition[] {
   }))
 }
 
-<<<<<<< HEAD
-=======
 // Auto-register all skills by importing them
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 export async function loadAllSkills(): Promise<void> {
   await Promise.all([
+    // System & files
     import('./osTerminal.js'),
     import('./cronHeartbeat.js'),
     import('./localFileOps.js'),
+    import('./systemInfo.js'),
+    // Vision
     import('./visionScreen.js'),
     import('./visionCamera.js'),
+    // Web & browser
     import('./headlessBrowser.js'),
     import('./apiFetcher.js'),
+    import('./webSearch.js'),
+    // Communications
     import('./commsEmail.js'),
     import('./commsChannels.js'),
     import('./commsCalendar.js'),
     import('./commsDiscord.js'),
     import('./commsGChat.js'),
+    import('./notifications.js'),
+    // Payments
     import('./businessPayments.js'),
     import('./businessPaymentsRazorpay.js'),
     import('./businessPaymentsPaypal.js'),
+    // Data & text
     import('./dataAnalysis.js'),
-    import('./webSearch.js'),
     import('./textTransform.js'),
-<<<<<<< HEAD
+    import('./encoding.js'),
+    import('./mathCrypto.js'),
+    // Git
+    import('./gitOps.js'),
+    // Memory
+    import('./memorySkills.js'),
+    // Proactive
+    import('./proactive.js'),
+    // Meeting & calls
+    import('./meetingCall.js'),
+    // Skill builder (JARVIS creates tools)
+    import('./skillBuilder.js'),
+    // Database
+    import('./database.js'),
+    // Cloud storage (S3-compatible)
+    import('./cloudStorage.js'),
+    // Docker container management
+    import('./docker.js'),
+    // PDF processing
+    import('./pdf.js'),
+    // Translation & NLP
+    import('./translate.js'),
+    // Archive management
+    import('./archive.js'),
+    // Network diagnostics
+    import('./network.js'),
+    // Image processing
+    import('./imageOps.js'),
+    // Scheduling & timers
+    import('./scheduler.js'),
+    // Code snippet manager
+    import('./snippet.js'),
     import('./emotionSkills.js'),
   ])
+
+  // Load user-created custom skills from disk
+  const { loadCustomSkills } = await import('./skillBuilder.js')
+  await loadCustomSkills()
+
+  // Load auto-generated skills from disk
+  const { loadAutoSkills } = await import('../autoSkillGenerator.js')
+  await loadAutoSkills()
 }
 
 export { type SkillDefinition, type SkillResult } from '../types/skills.js'
-=======
-  ])
-}
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54

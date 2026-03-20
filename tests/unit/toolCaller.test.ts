@@ -12,6 +12,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
 vi.mock('../../src/skills/index.js', () => ({
   toLLMTools: () => [],
   getAllDefinitions: () => [],
+  registerSkill: vi.fn(),
   getSkill: vi.fn().mockReturnValue({
     name: 'test_tool',
     handler: vi.fn().mockResolvedValue({ output: 'tool result', isError: false }),
