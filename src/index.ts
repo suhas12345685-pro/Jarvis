@@ -10,6 +10,8 @@ import { startDiscordClient } from './channels/discord.js'
 import { startTelegramPolling } from './channels/telegram.js'
 import { loadAllSkills, getAllDefinitions } from './skills/index.js'
 import { createConsciousness } from './consciousness.js'
+import { getProvider } from './llm/registry.js'
+import { getByoakValue } from './config.js'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
 
@@ -49,6 +51,24 @@ async function main() {
   // Initialize consciousness engine
   const consciousness = createConsciousness()
   consciousness.registerSkills(getAllDefinitions().map(s => s.name))
+
+  // Attach LLM provider to consciousness for deep thinking (LangGraph)
+  try {
+    const apiKey = config.llmProvider === 'anthropic'
+      ? config.anthropicApiKey
+      : (getByoakValue(config.byoak, config.llmProvider, 'API_KEY') || config.anthropicApiKey)
+    const llmProvider = getProvider({
+      provider: config.llmProvider,
+      model: config.llmModel,
+      apiKey,
+    })
+    consciousness.attachLLM(llmProvider, config.llmModel)
+    logger.info('Consciousness LLM thinking enabled', { provider: config.llmProvider, model: config.llmModel })
+  } catch (err) {
+    logger.warn('Consciousness LLM thinking unavailable, using rule-based fallback', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
   logger.info('Consciousness engine ready')
 
   // Start HTTP router (handles Slack, Telegram, Google Chat webhooks + API)

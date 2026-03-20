@@ -310,6 +310,9 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   })
 
   // ── Context Compiler ──────────────────────────────────────────────────────
+  // The persona system (src/persona.ts) now handles full system prompt construction,
+  // including consciousness state, emotions, memory, and identity injection.
+  // compileContext just assembles the raw AgentContext with data.
   async function compileContext(
     channelType: AgentContext['channelType'],
     userId: string,
@@ -321,28 +324,11 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
     personality?: ReturnType<EmotionEngine['getPersonality']>
   ): Promise<AgentContext> {
     const memories = await memory.semanticSearch(rawMessage, 5)
-    const memoryBlock = memories.length > 0
-      ? `\n\nRelevant memories:\n${memories.map(m => `- ${m.content}`).join('\n')}`
-      : ''
 
-    const emotionBlock = emotionState
-      ? `\n\nCurrent emotional context: I'm feeling ${emotionState.mood} (${emotionState.primary} at ${Math.round(emotionState.intensity * 100)}% intensity).`
-      : ''
-
-    const personalityBlock = personality
-      ? `\n\nUser personality: Warmth ${Math.round(personality.warmthLevel * 100)}%, Humor ${Math.round(personality.humorLevel * 100)}%, Formality ${Math.round(personality.formalityLevel * 100)}%.`
-      : ''
-
-    // Consciousness: inject inner state into the system prompt
-    let consciousnessBlock = ''
-    try {
-      const consciousness = getConsciousness()
-      consciousnessBlock = `\n\n${consciousness.getConsciousnessContext()}`
-    } catch {
-      // Consciousness engine not ready yet
-    }
-
-    const systemPrompt = `You are speaking with user ${userId} via ${channelType}.${memoryBlock}${emotionBlock}${personalityBlock}${consciousnessBlock}`
+    // systemPrompt is now built by buildPersonaPrompt(ctx) in the toolCaller,
+    // but we keep a minimal one here for backward compatibility with any
+    // code that reads ctx.systemPrompt directly.
+    const systemPrompt = `Interaction with ${userId} via ${channelType}.`
 
     return {
       channelType,

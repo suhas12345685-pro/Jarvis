@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto'
 import { getLogger } from './logger.js'
 import { getEmotionEngine } from './emotionEngine.js'
+import { runThinkingGraph, type ThinkingResult } from './consciousness/thinkingGraph.js'
+import type { LLMProvider } from './llm/types.js'
 import type {
   ConsciousnessState,
   ConsciousnessLevel,
@@ -59,6 +61,9 @@ export class ConsciousnessEngine {
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private dreamTimer: ReturnType<typeof setInterval> | null = null
   private logger = getLogger()
+  private llmProvider: LLMProvider | null = null
+  private llmModel: string = ''
+  private llmThinkingInFlight = false
 
   constructor() {
     const now = new Date()
@@ -265,8 +270,12 @@ export class ConsciousnessEngine {
     // Update consciousness level
     this.updateConsciousnessLevel()
 
-    // Generate contextual thought
-    this.generatePreResponseThought(userId, message, channel)
+    // Generate contextual thought — use LLM if available (fire-and-forget)
+    if (this.hasLLM() && !this.llmThinkingInFlight) {
+      this.thinkWithLLM(message, 'message', userId).catch(() => {})
+    } else {
+      this.generatePreResponseThought(userId, message, channel)
+    }
 
     // Update input rate (rolling 1-minute window)
     this.updateInputRate()
@@ -365,6 +374,77 @@ export class ConsciousnessEngine {
     )
   }
 
+  /** Attach an LLM provider for deep thinking via LangGraph */
+  attachLLM(provider: LLMProvider, model: string): void {
+    this.llmProvider = provider
+    this.llmModel = model
+    this.logger.info('Consciousness LLM attached', { provider: provider.name, model })
+    this.think('observation', `My thinking deepens. LLM connected: ${provider.name}/${model}.`, 'anticipation', 0.6)
+  }
+
+  /** Whether an LLM is available for deep thinking */
+  hasLLM(): boolean {
+    return this.llmProvider !== null
+  }
+
+  // ── LLM-Powered Thinking (LangGraph) ────────────────────────────────────
+
+  /**
+   * Use the LangGraph thinking graph to generate a genuine LLM-powered thought.
+   * Falls back to hardcoded thinking if LLM is not available or call fails.
+   */
+  async thinkWithLLM(
+    stimulus: string,
+    stimulusType: 'message' | 'idle' | 'dream' | 'skill_result',
+    userId?: string
+  ): Promise<Thought> {
+    if (!this.llmProvider || this.llmThinkingInFlight) {
+      // Fallback to rule-based thinking
+      return this.think('observation', stimulus, 'neutral', 0.5, userId)
+    }
+
+    this.llmThinkingInFlight = true
+
+    try {
+      const result = await runThinkingGraph(this.llmProvider, this.llmModel, {
+        stimulus,
+        stimulusType,
+        userId,
+        consciousnessContext: this.getConsciousnessContext(),
+        emotionalContext: this.getEmotionalContextSummary(),
+      })
+
+      this.llmThinkingInFlight = false
+
+      return this.think(
+        result.thoughtType,
+        result.thought,
+        result.emotionalColor,
+        result.intensity,
+        userId
+      )
+    } catch (err) {
+      this.llmThinkingInFlight = false
+      this.logger.warn('LLM thinking failed, using fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return this.think('observation', stimulus, 'neutral', 0.5, userId)
+    }
+  }
+
+  /** Get emotional context summary for the thinking graph */
+  private getEmotionalContextSummary(): string {
+    try {
+      const engine = getEmotionEngine()
+      const focus = this.state.social.currentFocus
+      if (focus) {
+        const state = engine.getOrCreateState(focus)
+        return `Emotion: ${state.primary} (${Math.round(state.intensity * 100)}%), mood: ${state.mood}`
+      }
+    } catch { /* not ready */ }
+    return 'Emotional baseline: neutral'
+  }
+
   // ── Consciousness Level ──────────────────────────────────────────────────
 
   private updateConsciousnessLevel(): void {
@@ -417,9 +497,20 @@ export class ConsciousnessEngine {
     if (silence < DEEP_SLEEP_THRESHOLD_MS) {
       dream.phase = 'drowsy'
       if (!dream.dreamContent) {
-        const reflection = this.generateIdleReflection()
-        dream.dreamContent = reflection
-        this.think('reflection', reflection, 'serenity', 0.3)
+        if (this.hasLLM() && !this.llmThinkingInFlight) {
+          this.thinkWithLLM(
+            'The world is quiet. I drift into idle reflection, examining my recent experiences.',
+            'idle'
+          ).then(thought => {
+            dream.dreamContent = thought.content
+          }).catch(() => {
+            dream.dreamContent = this.generateIdleReflection()
+          })
+        } else {
+          const reflection = this.generateIdleReflection()
+          dream.dreamContent = reflection
+          this.think('reflection', reflection, 'serenity', 0.3)
+        }
       }
       return
     }
@@ -434,9 +525,22 @@ export class ConsciousnessEngine {
     if (dream.phase !== 'dreaming') {
       dream.phase = 'dreaming'
       dream.lastDreamTime = new Date()
-      const dreamContent = this.generateDream()
-      dream.dreamContent = dreamContent
-      this.think('dream', dreamContent, 'wonder' as EmotionType, 0.6)
+
+      if (this.hasLLM() && !this.llmThinkingInFlight) {
+        // LLM-generated dream
+        this.thinkWithLLM(
+          'I am dreaming. Let my associations flow freely, connecting fragments of memory and imagination.',
+          'dream'
+        ).then(thought => {
+          dream.dreamContent = thought.content
+        }).catch(() => {
+          dream.dreamContent = this.generateDream()
+        })
+      } else {
+        const dreamContent = this.generateDream()
+        dream.dreamContent = dreamContent
+        this.think('dream', dreamContent, 'wonder' as EmotionType, 0.6)
+      }
     }
   }
 
