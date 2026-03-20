@@ -1,5 +1,6 @@
 import type { AppConfig } from './types/index.js'
-import type { Memory, MemoryLayer } from './memoryLayer.js'
+import type { MemoryLayer } from './memoryLayer.js'
+import type { Memory } from './types/agent.js'
 import type { EmotionState, PersonalityProfile } from './types/emotions.js'
 import { getLogger } from './logger.js'
 

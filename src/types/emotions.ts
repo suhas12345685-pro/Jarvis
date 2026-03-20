@@ -2,7 +2,8 @@ export type EmotionType =
   | 'joy' | 'sadness' | 'anger' | 'fear' | 'surprise'
   | 'disgust' | 'trust' | 'anticipation' | 'love' | 'remorse'
   | 'contempt' | 'admiration' | 'serenity' | 'amazement' | 'vigilance'
-  | 'boredom' | 'neutral'
+  | 'boredom' | 'neutral' | 'excitement' | 'frustration' | 'curiosity'
+  | 'gratitude'
 
 export type MoodState =
   | 'excited' | 'happy' | 'content' | 'neutral' | 'pensive'

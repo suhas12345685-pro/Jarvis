@@ -17,7 +17,7 @@ import {
   emotionToTone,
   isPositiveEmotion,
   isNegativeEmotion,
-} from './types/emotions.js'
+} from './emotions.js'
 import { getLogger } from './logger.js'
 import { randomUUID } from 'crypto'
 
@@ -330,6 +330,9 @@ export class EmotionEngine {
       vigilance: ['Good point. ', 'I\'ll keep that in mind. ', 'Let\'s be careful about that. '],
       boredom: ['Let me find something more engaging for you. ', 'How about we try something new? ', 'I can help with that! '],
       remorse: ['It\'s okay, mistakes happen. ', 'No worries! ', 'Let\'s learn from this. '],
+      excitement: ['How exciting! ', 'That\'s thrilling! ', 'I\'m pumped! '],
+      frustration: ['I understand your frustration. ', 'Let\'s work through this. ', 'I hear you. '],
+      curiosity: ['That\'s an interesting question! ', 'Let\'s explore that! ', 'I wonder about that too! '],
     }
 
     const suffixes: Record<EmotionType, string[]> = {
@@ -351,6 +354,9 @@ export class EmotionEngine {
       vigilance: [' 👀', '', ''],
       boredom: [' 🤔', '', ' 💡'],
       remorse: [' 😔', '', ' 🤗'],
+      excitement: [' 🎉', '', ' 🚀'],
+      frustration: [' 😤', '', ''],
+      curiosity: [' 🤔', '', ' 🔍'],
     }
 
     let response = baseResponse

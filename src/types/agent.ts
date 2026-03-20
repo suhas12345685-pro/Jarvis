@@ -1,8 +1,5 @@
 import type { ByoakEntry } from './config.js'
-<<<<<<< HEAD
 import type { EmotionState, PersonalityProfile } from './emotions.js'
-=======
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 
 export type ChannelType = 'slack' | 'telegram' | 'voice' | 'api' | 'discord' | 'gchat'
 
@@ -22,12 +19,9 @@ export interface AgentContext {
   memories: Memory[]
   systemPrompt: string
   byoak: ByoakEntry[]
-<<<<<<< HEAD
   emotionState?: EmotionState
   personality?: PersonalityProfile
-=======
   /** Used by commsChannels to update the interim "Working on it..." message */
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
   interimMessageId?: string
   sendInterim: (message: string) => Promise<string | undefined>
   sendFinal: (message: string, interimId?: string) => Promise<void>
