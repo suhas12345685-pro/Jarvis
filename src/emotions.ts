@@ -1,4 +1,4 @@
-import type {
+export type {
   EmotionType,
   MoodState,
   PersonalityTrait,
@@ -8,19 +8,17 @@ import type {
   SentimentResult,
   EmotionalResponse,
   VoiceModulation,
-} from './emotions.js'
+} from './types/emotions.js'
 
-export {
-  type EmotionType,
-  type MoodState,
-  type PersonalityTrait,
-  type EmotionState,
-  type PersonalityProfile,
-  type EmotionConfig,
-  type SentimentResult,
-  type EmotionalResponse,
-  type VoiceModulation,
-}
+import type {
+  EmotionType,
+  MoodState,
+  EmotionState,
+  PersonalityProfile,
+  EmotionConfig,
+  EmotionalResponse,
+  VoiceModulation,
+} from './types/emotions.js'
 
 export function createDefaultEmotionState(): EmotionState {
   return {
@@ -74,6 +72,9 @@ export function emotionTypeToMood(type: EmotionType): MoodState {
     contempt: 'frustrated',
     disgust: 'frustrated',
     frustration: 'frustrated',
+    amazement: 'excited',
+    curiosity: 'pensive',
+    gratitude: 'happy',
   }
   return mapping[type] ?? 'neutral'
 }
@@ -105,6 +106,9 @@ export function emotionToVoiceModulation(
     contempt: { pitch: basePitch * 0.9, speed: baseSpeed * 0.95, volume: baseVolume * 1.0 },
     remorse: { pitch: basePitch * 0.9, speed: baseSpeed * 0.9, volume: baseVolume * 0.9 },
     vigilance: { pitch: basePitch * 1.05, speed: baseSpeed * 1.0, volume: baseVolume * 1.0 },
+    amazement: { pitch: basePitch * 1.1, speed: baseSpeed * 1.15, volume: baseVolume * 1.05 },
+    frustration: { pitch: basePitch * 0.85, speed: baseSpeed * 1.1, volume: baseVolume * 1.05 },
+    gratitude: { pitch: basePitch * 1.02, speed: baseSpeed * 0.95, volume: baseVolume * 1.0 },
   }
 
   const mod = modulations[emotion] ?? modulations.neutral

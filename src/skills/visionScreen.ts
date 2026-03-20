@@ -1,9 +1,5 @@
 import { registerSkill } from './index.js'
 import type { AgentContext, SkillResult } from '../types/index.js'
-<<<<<<< HEAD
-=======
-import Anthropic from '@anthropic-ai/sdk'
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 import { getByoakValue } from '../config.js'
 
 registerSkill({
@@ -25,7 +21,6 @@ registerSkill({
       const imgBuffer: Buffer = await screenshot.default()
       const base64 = imgBuffer.toString('base64')
 
-<<<<<<< HEAD
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const apiKey = getByoakValue(ctx.byoak, 'anthropic', 'API_KEY') ?? ''
       const client = new Anthropic({ apiKey })
@@ -34,11 +29,6 @@ registerSkill({
         ? `\n\nThe user appears to be feeling ${ctx.emotionState.mood}. Be ${ctx.emotionState.primary === 'anger' || ctx.emotionState.primary === 'frustration' ? 'patient and reassuring' : ctx.emotionState.primary === 'sadness' ? 'gentle and supportive' : 'friendly and helpful'} in your response.`
         : ''
 
-=======
-      const apiKey = getByoakValue(ctx.byoak, 'anthropic', 'API_KEY') ?? process.env.ANTHROPIC_API_KEY ?? ''
-      const client = new Anthropic({ apiKey })
-
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       const response = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
@@ -50,11 +40,7 @@ registerSkill({
                 type: 'image',
                 source: { type: 'base64', media_type: 'image/png', data: base64 },
               },
-<<<<<<< HEAD
               { type: 'text', text: `${input.question}${emotionContext}` },
-=======
-              { type: 'text', text: String(input.question) },
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
             ],
           },
         ],
@@ -62,11 +48,7 @@ registerSkill({
 
       const text = response.content
         .filter(b => b.type === 'text')
-<<<<<<< HEAD
         .map(b => (b as { type: 'text'; text: string }).text)
-=======
-        .map(b => (b as Anthropic.TextBlock).text)
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
         .join('\n')
 
       return { output: text, isError: false }

@@ -1,5 +1,6 @@
 import { registerSkill } from './index.js'
 import type { AgentContext, SkillResult } from '../types/index.js'
+import type { PersonalityTrait } from '../types/emotions.js'
 import { getEmotionEngine } from '../emotionEngine.js'
 
 registerSkill({
@@ -83,7 +84,7 @@ registerSkill({
     const humorLevel = Number(input.humorLevel ?? 0.5)
     const formalityLevel = Number(input.formalityLevel ?? 0.4)
     const empathyLevel = Number(input.empathyLevel ?? 0.8)
-    const traits = (input.traits as string[]) ?? ['helpful', 'warm', 'curious']
+    const traits = ((input.traits as string[]) ?? ['helpful', 'warm', 'curious']) as PersonalityTrait[]
 
     const personality = {
       traits,

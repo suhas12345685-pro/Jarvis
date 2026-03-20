@@ -1,17 +1,10 @@
 import { registerSkill } from './index.js'
 import type { AgentContext, SkillResult } from '../types/index.js'
-<<<<<<< HEAD
-=======
-import Anthropic from '@anthropic-ai/sdk'
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { unlink, readFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
-<<<<<<< HEAD
 import { getByoakValue } from '../config.js'
-=======
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
 
 registerSkill({
   name: 'vision_camera',
@@ -51,7 +44,6 @@ registerSkill({
       const imgBuffer = await readFile(tmpPath)
       const base64 = imgBuffer.toString('base64')
 
-<<<<<<< HEAD
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const apiKey = getByoakValue(ctx.byoak, 'anthropic', 'API_KEY') ?? ''
       const client = new Anthropic({ apiKey })
@@ -60,9 +52,6 @@ registerSkill({
         ? `\n\nContext: The user seems to be in a ${ctx.emotionState.mood} mood. Respond in a warm and ${ctx.emotionState.primary === 'neutral' ? 'helpful' : 'empathetic'} manner.`
         : ''
 
-=======
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
       const response = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
@@ -74,11 +63,7 @@ registerSkill({
                 type: 'image',
                 source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
               },
-<<<<<<< HEAD
               { type: 'text', text: `${input.question}${emotionContext}` },
-=======
-              { type: 'text', text: String(input.question) },
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
             ],
           },
         ],
@@ -86,24 +71,16 @@ registerSkill({
 
       const text = response.content
         .filter(b => b.type === 'text')
-<<<<<<< HEAD
         .map(b => (b as { type: 'text'; text: string }).text)
-=======
-        .map(b => (b as Anthropic.TextBlock).text)
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
         .join('\n')
 
       return { output: text, isError: false }
     } catch (err) {
-<<<<<<< HEAD
       const errorMsg = (err as Error).message
       if (errorMsg.includes('No cameras available') || errorMsg.includes('NotFoundError')) {
         return { output: "I couldn't access the camera. Make sure it's connected and you have given permission to use it.", isError: true }
       }
       return { output: `Camera error: ${errorMsg}`, isError: true }
-=======
-      return { output: `Camera error: ${(err as Error).message}`, isError: true }
->>>>>>> e0d59e7b5270ae6d2f51bb3f447c22895f8fee54
     } finally {
       await unlink(tmpPath).catch(() => {})
     }
