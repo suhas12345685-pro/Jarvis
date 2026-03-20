@@ -66,9 +66,17 @@ async function handler(
 
     return { output: truncated || '(no output)', isError: false }
   } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string }
-    const output = [e.stdout, e.stderr, e.message].filter(Boolean).join('\n')
-    return { output: output || 'Command failed', isError: true }
+    let payload = {}
+    if (err instanceof Error) {
+      payload = Object.getOwnPropertyNames(err).reduce((acc, key) => {
+        acc[key] = (err as any)[key]
+        return acc
+      }, {} as Record<string, any>)
+    } else {
+      payload = { error: String(err) }
+    }
+
+    return { output: JSON.stringify(payload), isError: true }
   }
 }
 
