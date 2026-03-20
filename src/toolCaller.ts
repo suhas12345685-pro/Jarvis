@@ -6,6 +6,7 @@ import { getSkill } from './skills/index.js'
 import { getLogger } from './logger.js'
 import { getByoakValue } from './config.js'
 import { autoGenerateSkill } from './autoSkillGenerator.js'
+import { getConsciousness } from './consciousness.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
@@ -187,6 +188,9 @@ export async function runToolLoop(
           output = result.output
           isError = result.isError
           logger.info('Tool result', { tool: tc.name, isError })
+
+          // Consciousness: track skill usage
+          try { getConsciousness().onSkillUsed(tc.name, !isError) } catch { /* not ready */ }
 
           // Retry once on error
           if (isError) {

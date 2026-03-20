@@ -86,6 +86,8 @@ export async function loadAllSkills(): Promise<void> {
     // Code snippet manager
     import('./snippet.js'),
     import('./emotionSkills.js'),
+    // Consciousness & introspection
+    import('./consciousnessSkills.js'),
   ])
 
   // Load user-created custom skills from disk

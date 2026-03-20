@@ -8,7 +8,8 @@ import { createRouter } from './router.js'
 import { startVoiceEngine } from './voiceEngine.js'
 import { startDiscordClient } from './channels/discord.js'
 import { startTelegramPolling } from './channels/telegram.js'
-import { loadAllSkills } from './skills/index.js'
+import { loadAllSkills, getAllDefinitions } from './skills/index.js'
+import { createConsciousness } from './consciousness.js'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
 
@@ -45,6 +46,11 @@ async function main() {
   await loadAllSkills()
   logger.info('Skills loaded')
 
+  // Initialize consciousness engine
+  const consciousness = createConsciousness()
+  consciousness.registerSkills(getAllDefinitions().map(s => s.name))
+  logger.info('Consciousness engine ready')
+
   // Start HTTP router (handles Slack, Telegram, Google Chat webhooks + API)
   const { app, queue } = createRouter(config, memory)
   const server = app.listen(config.port, () => {
@@ -64,6 +70,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully`)
     server.close(async () => {
+      consciousness.shutdown()
       await memory.close()
       logger.info('JARVIS shut down cleanly')
       process.exit(0)

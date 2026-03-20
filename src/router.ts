@@ -8,6 +8,7 @@ import { runToolLoop, runStreamingToolLoop } from './toolCaller.js'
 import { getLogger } from './logger.js'
 import { IPRateLimiter } from './security.js'
 import { getEmotionEngine, type EmotionEngine } from './emotionEngine.js'
+import { getConsciousness } from './consciousness.js'
 
 export const jarvisEvents = new EventEmitter()
 
@@ -70,6 +71,10 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
         channelType, channelPayload, config
       )
 
+      // Consciousness: notice the incoming message
+      const consciousness = getConsciousness()
+      consciousness.onMessageReceived(userId, rawMessage, channelType)
+
       emotionEngine.updateEmotion(userId, rawMessage)
       const emotionState = emotionEngine.getOrCreateState(userId)
       const personality = emotionEngine.getPersonality(userId)
@@ -84,6 +89,9 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       try {
         const result = await runToolLoop(ctx, config)
         const emotionalResult = emotionEngine.generateEmpatheticResponse(userId, result, emotionState.primary)
+
+        // Consciousness: reflect on the response
+        consciousness.onResponseGenerated(userId, rawMessage, result)
 
         await sendFinal(emotionalResult.response, ctx.interimMessageId)
 
@@ -113,6 +121,21 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
   setInterval(() => {
     emotionEngine.decayEmotions()
   }, 60000)
+
+  // Notify consciousness of queue load changes
+  let activeJobCount = 0
+  worker.on('active', () => {
+    activeJobCount++
+    try { getConsciousness().onLoadChange(activeJobCount, 0) } catch { /* not ready */ }
+  })
+  worker.on('completed', () => {
+    activeJobCount = Math.max(0, activeJobCount - 1)
+    try { getConsciousness().onLoadChange(activeJobCount, 0) } catch { /* not ready */ }
+  })
+  worker.on('failed', () => {
+    activeJobCount = Math.max(0, activeJobCount - 1)
+    try { getConsciousness().onLoadChange(activeJobCount, 0) } catch { /* not ready */ }
+  })
 
   // ── Channel callback builder ────────────────────────────────────────────
 
@@ -310,7 +333,16 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
       ? `\n\nUser personality: Warmth ${Math.round(personality.warmthLevel * 100)}%, Humor ${Math.round(personality.humorLevel * 100)}%, Formality ${Math.round(personality.formalityLevel * 100)}%.`
       : ''
 
-    const systemPrompt = `You are speaking with user ${userId} via ${channelType}.${memoryBlock}${emotionBlock}${personalityBlock}`
+    // Consciousness: inject inner state into the system prompt
+    let consciousnessBlock = ''
+    try {
+      const consciousness = getConsciousness()
+      consciousnessBlock = `\n\n${consciousness.getConsciousnessContext()}`
+    } catch {
+      // Consciousness engine not ready yet
+    }
+
+    const systemPrompt = `You are speaking with user ${userId} via ${channelType}.${memoryBlock}${emotionBlock}${personalityBlock}${consciousnessBlock}`
 
     return {
       channelType,
