@@ -88,6 +88,8 @@ export async function loadAllSkills(): Promise<void> {
     import('./emotionSkills.js'),
     // Consciousness & introspection
     import('./consciousnessSkills.js'),
+    // Agent swarm deployment
+    import('./agentSwarm.js'),
   ])
 
   // Load user-created custom skills from disk
