@@ -85,6 +85,7 @@ export async function loadAllSkills(): Promise<void> {
     import('./scheduler.js'),
     // Code snippet manager
     import('./snippet.js'),
+    import('./emotionSkills.js'),
   ])
 
   // Load user-created custom skills from disk
@@ -95,3 +96,5 @@ export async function loadAllSkills(): Promise<void> {
   const { loadAutoSkills } = await import('../autoSkillGenerator.js')
   await loadAutoSkills()
 }
+
+export { type SkillDefinition, type SkillResult } from '../types/skills.js'
