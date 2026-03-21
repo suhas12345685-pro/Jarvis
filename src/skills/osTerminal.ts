@@ -65,13 +65,19 @@ async function handler(
       : combined
 
     return { output: truncated || '(no output)', isError: false }
-  } catch (err) {
-    let payload = {}
+  } catch (err: any) {
+    let payload: Record<string, any> = {}
     if (err instanceof Error) {
-      payload = Object.getOwnPropertyNames(err).reduce((acc, key) => {
-        acc[key] = (err as any)[key]
-        return acc
-      }, {} as Record<string, any>)
+      payload = {
+        message: err.message,
+        name: err.name,
+        code: err.code ?? null,
+        killed: err.killed ?? false,
+        signal: err.signal ?? null,
+        cmd: err.cmd ?? '',
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+      }
     } else {
       payload = { error: String(err) }
     }
