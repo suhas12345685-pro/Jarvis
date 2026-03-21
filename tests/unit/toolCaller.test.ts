@@ -166,4 +166,120 @@ describe('toolCaller', () => {
     const result = await runToolLoop(ctx, makeConfig())
     expect(result).toBe('Done.')
   })
+
+  it('appends proactive care offer when triggered', async () => {
+    const { checkProactiveCare } = await import('../../src/skills/proactiveCare.js')
+    ;(checkProactiveCare as ReturnType<typeof vi.fn>).mockResolvedValueOnce('Would you like me to order some coffee?')
+
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // Main response
+    mockChat.mockResolvedValueOnce({
+      text: 'Here is your report.',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+
+    const { runToolLoop } = await import('../../src/toolCaller.js')
+    const ctx = makeCtx()
+    const result = await runToolLoop(ctx, makeConfig())
+    expect(result).toContain('Here is your report.')
+    expect(result).toContain('Would you like me to order some coffee?')
+  })
+
+  it('injects recalled knowledge into user message', async () => {
+    const { recallRelevantKnowledge } = await import('../../src/learningEngine.js')
+    ;(recallRelevantKnowledge as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      'User prefers TypeScript',
+      'User works at a startup',
+    ])
+
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // Main response
+    mockChat.mockResolvedValueOnce({
+      text: 'Based on your preferences...',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+
+    const { runToolLoop } = await import('../../src/toolCaller.js')
+    const ctx = makeCtx()
+    await runToolLoop(ctx, makeConfig())
+
+    // The second chat call should include recalled knowledge in the user message
+    const mainCall = mockChat.mock.calls[1]
+    const userMessage = mainCall[0].messages[0].content
+    expect(userMessage).toContain('Recalled from memory')
+    expect(userMessage).toContain('TypeScript')
+  })
+
+  it('returns error message after consecutive LLM failures', async () => {
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // 3 consecutive failures (exceeds limit of 2 retries)
+    mockChat.mockRejectedValueOnce(new Error('Rate limit'))
+    mockChat.mockRejectedValueOnce(new Error('Rate limit'))
+    mockChat.mockRejectedValueOnce(new Error('Rate limit'))
+
+    const { runToolLoop } = await import('../../src/toolCaller.js')
+    const ctx = makeCtx()
+    const result = await runToolLoop(ctx, makeConfig())
+    expect(result).toContain('error communicating with the AI provider')
+  })
+
+  it('handles silent capability check with GENERATE response', async () => {
+    // silentCapabilityCheck returns GENERATE — this triggers autoGenerateSkill
+    // But even if generation doesn't happen (mock returns false), the loop continues
+    mockChat.mockResolvedValueOnce({
+      text: 'GENERATE|csv_parser|Parse CSV files into JSON',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // Main response after capability check
+    mockChat.mockResolvedValueOnce({
+      text: 'I can handle that now.',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+
+    const { runToolLoop } = await import('../../src/toolCaller.js')
+    const ctx = makeCtx()
+    const result = await runToolLoop(ctx, makeConfig())
+
+    // The tool loop should still complete and return the response
+    expect(result).toBe('I can handle that now.')
+  })
+
+  it('reaches max rounds and returns depth message', async () => {
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // Always return tool calls (never end_turn)
+    mockChat.mockResolvedValue({
+      text: '',
+      toolCalls: [{ id: 'tu1', name: 'test_tool', arguments: {} }],
+      stopReason: 'tool_use',
+    })
+
+    const { runToolLoop } = await import('../../src/toolCaller.js')
+    const ctx = makeCtx()
+    const result = await runToolLoop(ctx, makeConfig())
+    expect(result).toContain('maximum tool call depth')
+  })
 })

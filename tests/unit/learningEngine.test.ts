@@ -177,4 +177,59 @@ describe('learningEngine', () => {
     expect(insights.length).toBeGreaterThan(0)
     expect(insights[0]).toContain('time awareness')
   })
+
+  it('skips learning when LLM returns NONE', async () => {
+    const memory = makeMemory()
+    initLearningEngine(makeConfig(), memory)
+
+    mockChat.mockResolvedValueOnce({
+      text: 'NONE',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+
+    await learnFromInteraction('user1', 'What is the weather like outside today?', 'Let me check', 'api')
+    expect(memory.insertMemory).not.toHaveBeenCalled()
+  })
+
+  it('handles LLM errors gracefully during interaction learning', async () => {
+    const memory = makeMemory()
+    initLearningEngine(makeConfig(), memory)
+
+    mockChat.mockRejectedValueOnce(new Error('API timeout'))
+
+    // Should not throw
+    await learnFromInteraction('user1', 'This is a long enough message to learn from today', 'Response', 'api')
+    expect(memory.insertMemory).not.toHaveBeenCalled()
+  })
+
+  it('handles memory layer errors gracefully during outcome learning', async () => {
+    const memory = makeMemory()
+    ;(memory.insertMemory as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB error'))
+    initLearningEngine(makeConfig(), memory)
+
+    // Should not throw even when insertMemory fails
+    await learnFromOutcome('user1', 'broken_skill', { a: 1 }, false, 'SMTP connection failed here unexpectedly')
+  })
+
+  it('returns empty when memory search fails during recall', async () => {
+    const memory = makeMemory()
+    ;(memory.semanticSearch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB down'))
+    initLearningEngine(makeConfig(), memory)
+
+    const result = await recallRelevantKnowledge('anything')
+    expect(result).toEqual([])
+  })
+
+  it('prioritizes user-specific facts during recall', async () => {
+    const memory = makeMemory()
+    ;(memory.semanticSearch as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: '1', content: 'General fact', metadata: { userId: 'other' }, embedding: [], createdAt: new Date() },
+      { id: '2', content: 'User-specific fact', metadata: { userId: 'user1' }, embedding: [], createdAt: new Date() },
+    ])
+    initLearningEngine(makeConfig(), memory)
+
+    const recalled = await recallRelevantKnowledge('something', 'user1')
+    expect(recalled[0]).toBe('User-specific fact')
+  })
 })
