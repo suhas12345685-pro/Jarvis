@@ -55,6 +55,8 @@ export type LLMProviderName =
   | 'ollama'
   | 'meta'
   | 'perplexity'
+  | 'manus'
+  | 'grok'
 
 export interface LLMProviderConfig {
   provider: LLMProviderName
@@ -62,3 +64,9 @@ export interface LLMProviderConfig {
   apiKey?: string
   baseUrl?: string
 }
+
+/**
+ * Unified message engine interface — all providers implement LLMProvider,
+ * which satisfies IMessageEngine. This alias exists for documentation clarity.
+ */
+export type IMessageEngine = LLMProvider

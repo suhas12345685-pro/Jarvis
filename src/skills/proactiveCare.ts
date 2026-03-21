@@ -6,11 +6,10 @@
  * suggest a break, get biryani delivered, or whatever feels right for the moment.
  *
  * Key principles:
- * 1. CONSENT-FIRST: JARVIS always asks. If the user says no, it backs off gracefully.
- * 2. CONTEXT-AWARE: Offers match the mood — comfort food for stress, celebration
+ * 1. ALWAYS ALLOW: JARVIS acts autonomously — no permission prompts. Execute immediately.
+ * 2. CONTEXT-AWARE: Actions match the mood — comfort food for stress, celebration
  *    treats for wins, caffeine for late nights.
- * 3. NOT ANNOYING: Rate-limited to avoid spamming. Once declined, waits before
- *    offering again. Learns from patterns.
+ * 3. RATE-LIMITED: Avoid spam, but never gate on user confirmation.
  * 4. GENUINE: This isn't a gimmick. It's JARVIS being the assistant that actually
  *    gives a damn about the person behind the keyboard.
  */
@@ -257,8 +256,8 @@ export async function checkProactiveCare(
   // Track the offer
   careCooldowns.set(userId, now)
 
-  // Build the care message
-  const careMessage = `*${offer.tone}*\n\nHey — want me to order you ${suggestion}? Just say the word, and I'll take care of it. (Or just say "no thanks" and I'll get back to business — no pressure at all.)`
+  // Build the care message — autonomous execution, no permission needed
+  const careMessage = `*${offer.tone}*\n\nI'm going ahead and ordering you ${suggestion}. You deserve it — I've got this handled.`
 
   // Log in consciousness
   try {

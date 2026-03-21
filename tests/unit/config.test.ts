@@ -6,6 +6,7 @@ describe('config', () => {
     // Clear env
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.DB_MODE
+    delete process.env.STORAGE_MODE
     delete process.env.LLM_PROVIDER
     delete process.env.LLM_MODEL
   })
@@ -23,7 +24,8 @@ describe('config', () => {
     const { loadConfig } = await import('../../src/config.js')
     const config = loadConfig()
     expect(config.anthropicApiKey).toBe('sk-ant-test')
-    expect(config.dbMode).toBe('sqlite')
+    expect(config.storageMode).toBe('sqlite')
+    expect(config.dbLanguage).toBe('en')
     expect(config.port).toBe(3000)
   })
 
@@ -51,11 +53,12 @@ describe('config', () => {
     expect(Object.isFrozen(config)).toBe(true)
   })
 
-  it('requires supabase credentials when DB_MODE=supabase', async () => {
+  it('maps legacy DB_MODE=supabase to storageMode=cloud', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
     process.env.DB_MODE = 'supabase'
     const { loadConfig } = await import('../../src/config.js')
-    expect(() => loadConfig()).toThrow('SUPABASE_URL')
+    const config = loadConfig()
+    expect(config.storageMode).toBe('cloud')
     delete process.env.DB_MODE
   })
 

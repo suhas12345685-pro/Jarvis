@@ -2,6 +2,7 @@
 import * as p from '@clack/prompts'
 import { writeFileSync, renameSync, chmodSync, existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
+import { spawn } from 'child_process'
 import Anthropic from '@anthropic-ai/sdk'
 import Stripe from 'stripe'
 
@@ -57,19 +58,19 @@ async function main() {
 
   p.intro('🤖  JARVIS Setup Wizard')
 
-  // ── LLM Provider ───────────────────────────────────────────────────────────
+  // ── LLM Provider (The Unified Brain) ───────────────────────────────────────
   const llmProvider = await p.select({
-    message: 'Primary LLM provider',
+    message: 'Primary LLM provider (The Unified Brain)',
     options: [
       { value: 'anthropic', label: 'Anthropic (Claude)' },
       { value: 'openai', label: 'OpenAI (GPT-4o)' },
       { value: 'gemini', label: 'Google Gemini' },
-      { value: 'xai', label: 'xAI (Grok)' },
+      { value: 'manus', label: 'Manus AI' },
+      { value: 'grok', label: 'Grok (xAI)' },
+      { value: 'perplexity', label: 'Perplexity AI' },
       { value: 'deepseek', label: 'DeepSeek' },
       { value: 'moonshot', label: 'Moonshot / Kimi' },
       { value: 'ollama', label: 'Ollama (local)' },
-      { value: 'meta', label: 'Meta / Llama (via Together AI)' },
-      { value: 'perplexity', label: 'Perplexity AI' },
     ],
     initialValue: existing.LLM_PROVIDER ?? 'anthropic',
   })
@@ -79,43 +80,12 @@ async function main() {
   // Model override (optional)
   const llmModel = await p.text({
     message: 'LLM model (leave blank for default)',
-    placeholder: 'e.g. gpt-4o, claude-sonnet-4-6, gemini-2.0-flash',
+    placeholder: 'e.g. gpt-4o, claude-sonnet-4-6, gemini-2.0-flash, manus-1, grok-2-latest',
     initialValue: existing.LLM_MODEL ?? '',
   })
   if (p.isCancel(llmModel)) { p.cancel('Setup cancelled.'); process.exit(0) }
   if ((llmModel as string).trim()) {
     env.LLM_MODEL = (llmModel as string).trim()
-  }
-
-  // ── DB Mode ───────────────────────────────────────────────────────────────
-  const dbMode = await p.select({
-    message: 'Database mode',
-    options: [
-      { value: 'sqlite', label: 'SQLite (local, private)' },
-      { value: 'supabase', label: 'Supabase (cloud, multi-device sync)' },
-    ],
-    initialValue: existing.DB_MODE ?? 'sqlite',
-  })
-  if (p.isCancel(dbMode)) { p.cancel('Setup cancelled.'); process.exit(0) }
-  env.DB_MODE = dbMode as string
-
-  if (dbMode === 'supabase') {
-    const supabaseUrl = await p.text({
-      message: 'Supabase project URL',
-      placeholder: 'https://your-project.supabase.co',
-      initialValue: existing.SUPABASE_URL ?? '',
-      validate: v => (v && v.startsWith('https://')) ? undefined : 'Must be a valid URL',
-    })
-    if (p.isCancel(supabaseUrl)) { p.cancel('Setup cancelled.'); process.exit(0) }
-    env.SUPABASE_URL = supabaseUrl as string
-
-    const supabaseKey = await p.password({
-      message: 'Supabase service role key',
-    })
-    if (p.isCancel(supabaseKey)) { p.cancel('Setup cancelled.'); process.exit(0) }
-    env.SUPABASE_SERVICE_KEY = supabaseKey as string
-  } else {
-    env.SQLITE_PATH = existing.SQLITE_PATH ?? '~/.jarvis/jarvis.db'
   }
 
   // ── LLM API Key ────────────────────────────────────────────────────────────
@@ -144,14 +114,16 @@ async function main() {
       }
     }
   } else if (llmProvider !== 'ollama') {
-    // For non-Anthropic, non-Ollama providers, collect their API key
+    // For non-Anthropic, non-Ollama providers, collect their API key via BYOAK
     const providerNames: Record<string, string> = {
-      openai: 'OpenAI', gemini: 'Google Gemini', xai: 'xAI',
+      openai: 'OpenAI', gemini: 'Google Gemini', grok: 'Grok (xAI)', xai: 'xAI',
       deepseek: 'DeepSeek', moonshot: 'Moonshot', meta: 'Together AI (Meta)',
-      perplexity: 'Perplexity',
+      perplexity: 'Perplexity', manus: 'Manus AI',
     }
     const providerLabel = providerNames[llmProvider as string] ?? llmProvider
-    const byoakEnvKey = `BYOAK_${(llmProvider as string).toUpperCase()}_API_KEY`
+    // grok uses xai's BYOAK key
+    const byoakService = (llmProvider as string) === 'grok' ? 'XAI' : (llmProvider as string).toUpperCase()
+    const byoakEnvKey = `BYOAK_${byoakService}_API_KEY`
 
     const apiKey = await p.password({
       message: `${providerLabel} API key`,
@@ -161,7 +133,97 @@ async function main() {
     if (v) env[byoakEnvKey] = v
   }
 
-  // ── Redis ─────────────────────────────────────────────────────────────────
+  // ── Storage Mode ───────────────────────────────────────────────────────────
+  const storageMode = await p.select({
+    message: 'Memory storage mode',
+    options: [
+      { value: 'sqlite', label: 'Only SQLite — all memory/states purely local' },
+      { value: 'cloud', label: 'Cloud Only — all data in an Ecosystem Provider' },
+      { value: 'hybrid', label: 'Hybrid — federated (some cloud, some local SQLite)' },
+    ],
+    initialValue: existing.STORAGE_MODE ?? 'sqlite',
+  })
+  if (p.isCancel(storageMode)) { p.cancel('Setup cancelled.'); process.exit(0) }
+  env.STORAGE_MODE = storageMode as string
+
+  // Always set SQLite path (even for cloud mode — acts as cache)
+  env.SQLITE_PATH = existing.SQLITE_PATH ?? '~/.jarvis/jarvis.db'
+
+  // ── Ecosystem Provider (if cloud or hybrid) ─────────────────────────────────
+  if (storageMode === 'cloud' || storageMode === 'hybrid') {
+    const ecosystemProvider = await p.select({
+      message: 'Ecosystem storage provider',
+      options: [
+        { value: 'google_drive', label: 'Google Drive' },
+        { value: 'onedrive', label: 'Microsoft OneDrive' },
+        { value: 'icloud', label: 'Apple iCloud Drive' },
+        { value: 'dropbox', label: 'Dropbox' },
+        { value: 'box', label: 'Box' },
+        { value: 'digiboxx', label: 'Digiboxx' },
+      ],
+      initialValue: existing.ECOSYSTEM_PROVIDER ?? 'google_drive',
+    })
+    if (p.isCancel(ecosystemProvider)) { p.cancel('Setup cancelled.'); process.exit(0) }
+    env.ECOSYSTEM_PROVIDER = ecosystemProvider as string
+
+    // Collect OAuth credentials for the chosen provider
+    const providerCredPrompts: Record<string, Array<{ env: string; label: string; password?: boolean }>> = {
+      google_drive: [
+        { env: 'BYOAK_GDRIVE_CLIENT_ID', label: 'Google OAuth Client ID' },
+        { env: 'BYOAK_GDRIVE_CLIENT_SECRET', label: 'Google OAuth Client Secret', password: true },
+        { env: 'BYOAK_GDRIVE_REFRESH_TOKEN', label: 'Google Refresh Token', password: true },
+      ],
+      onedrive: [
+        { env: 'BYOAK_ONEDRIVE_CLIENT_ID', label: 'Microsoft App Client ID' },
+        { env: 'BYOAK_ONEDRIVE_CLIENT_SECRET', label: 'Microsoft App Client Secret', password: true },
+        { env: 'BYOAK_ONEDRIVE_REFRESH_TOKEN', label: 'Microsoft Refresh Token', password: true },
+      ],
+      icloud: [
+        { env: 'BYOAK_ICLOUD_APPLE_ID', label: 'Apple ID' },
+        { env: 'BYOAK_ICLOUD_APP_PASSWORD', label: 'App-specific password', password: true },
+      ],
+      dropbox: [
+        { env: 'BYOAK_DROPBOX_ACCESS_TOKEN', label: 'Dropbox access token', password: true },
+        { env: 'BYOAK_DROPBOX_REFRESH_TOKEN', label: 'Dropbox refresh token (optional)', password: true },
+      ],
+      box: [
+        { env: 'BYOAK_BOX_CLIENT_ID', label: 'Box Client ID' },
+        { env: 'BYOAK_BOX_CLIENT_SECRET', label: 'Box Client Secret', password: true },
+        { env: 'BYOAK_BOX_ACCESS_TOKEN', label: 'Box access token', password: true },
+      ],
+      digiboxx: [
+        { env: 'BYOAK_DIGIBOXX_ACCESS_TOKEN', label: 'Digiboxx access token', password: true },
+      ],
+    }
+
+    const creds = providerCredPrompts[ecosystemProvider as string] ?? []
+    for (const cred of creds) {
+      const prompt = cred.password
+        ? p.password({ message: cred.label })
+        : p.text({ message: cred.label, initialValue: existing[cred.env] ?? '' })
+      const value = await prompt
+      if (p.isCancel(value)) continue
+      const v = (value as string).trim()
+      if (v) env[cred.env] = v
+    }
+  }
+
+  // Remove old Supabase/AWS config — replaced by ecosystem storage
+  delete env.DB_MODE
+  delete env.SUPABASE_URL
+  delete env.SUPABASE_SERVICE_KEY
+
+  // ── Owner User ID (RBAC) ──────────────────────────────────────────────────
+  const ownerUserId = await p.text({
+    message: 'Your User ID for channel RBAC (Discord ID, Telegram ID, etc.)',
+    placeholder: 'e.g. 123456789',
+    initialValue: existing.OWNER_USER_ID ?? '',
+  })
+  if (!p.isCancel(ownerUserId) && (ownerUserId as string).trim()) {
+    env.OWNER_USER_ID = (ownerUserId as string).trim()
+  }
+
+  // ── Redis ──────────────────────────────────────────────────────────────────
   const redisUrl = await p.text({
     message: 'Redis URL',
     placeholder: 'redis://localhost:6379',
@@ -173,7 +235,7 @@ async function main() {
   env.PORT = existing.PORT ?? '3000'
   env.LOG_PATH = existing.LOG_PATH ?? '~/.jarvis/logs/app.log'
 
-  // ── BYOAK keys ────────────────────────────────────────────────────────────
+  // ── BYOAK keys ─────────────────────────────────────────────────────────────
   const addByoak = await p.confirm({
     message: 'Configure optional integration keys (channels, payments, etc.)?',
     initialValue: true,
@@ -182,12 +244,29 @@ async function main() {
     await configureByoak(env, existing)
   }
 
-  // ── Write .env ────────────────────────────────────────────────────────────
+  // ── Write .env ─────────────────────────────────────────────────────────────
   writeFileSync(ENV_TMP, buildEnvFile(env), 'utf-8')
   renameSync(ENV_TMP, ENV_PATH)
   chmodSync(ENV_PATH, 0o600)
 
-  p.outro('✅  JARVIS configured! Run "npm run dev" to start.')
+  // ── Spawn PM2 daemon (invisible) ──────────────────────────────────────────
+  const startDaemon = await p.confirm({
+    message: 'Start JARVIS daemon in background via PM2?',
+    initialValue: true,
+  })
+
+  if (!p.isCancel(startDaemon) && startDaemon) {
+    p.log.info('Launching JARVIS daemon…')
+    const child = spawn('npx', ['pm2', 'start', 'dist/cli/worker.js', '--name', 'JARVIS'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+    p.outro('✅  JARVIS configured and daemon launched! Check logs: ~/.jarvis/ghost.log')
+  } else {
+    p.outro('✅  JARVIS configured! Run "npm run dev" to start.')
+  }
 }
 
 async function configureByoak(
@@ -224,15 +303,6 @@ async function configureByoak(
         { env: 'BYOAK_GCHAT_SERVICE_ACCOUNT_KEY', label: 'Service account JSON key (paste JSON or file path)' },
       ],
     },
-    // ── Voice ─────────────────────────────────────────────────────────
-    {
-      name: 'LiveKit (Voice)',
-      keys: [
-        { env: 'BYOAK_LIVEKIT_URL', label: 'LiveKit server URL (wss://...)' },
-        { env: 'BYOAK_LIVEKIT_API_KEY', label: 'API key' },
-        { env: 'BYOAK_LIVEKIT_API_SECRET', label: 'API secret' },
-      ],
-    },
     // ── Email & Calendar ──────────────────────────────────────────────
     {
       name: 'Email (SMTP/IMAP)',
@@ -254,7 +324,7 @@ async function configureByoak(
         { env: 'BYOAK_GCAL_REFRESH_TOKEN', label: 'Refresh token', password: true },
       ],
     },
-    // ── LLM API Keys (additional providers) ───────────────────────────
+    // ── Additional LLM API Keys ────────────────────────────────────────
     {
       name: 'OpenAI',
       keys: [{ env: 'BYOAK_OPENAI_API_KEY', label: 'API key (sk-...)' }],
@@ -264,7 +334,7 @@ async function configureByoak(
       keys: [{ env: 'BYOAK_GEMINI_API_KEY', label: 'API key' }],
     },
     {
-      name: 'xAI (Grok)',
+      name: 'Grok (xAI)',
       keys: [{ env: 'BYOAK_XAI_API_KEY', label: 'API key' }],
     },
     {
@@ -278,6 +348,10 @@ async function configureByoak(
     {
       name: 'Perplexity AI',
       keys: [{ env: 'BYOAK_PERPLEXITY_API_KEY', label: 'API key' }],
+    },
+    {
+      name: 'Manus AI',
+      keys: [{ env: 'BYOAK_MANUS_API_KEY', label: 'Manus API key' }],
     },
     {
       name: 'Meta / Llama (Together AI)',

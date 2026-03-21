@@ -11,15 +11,18 @@ export const DEFAULT_MODELS: Record<LLMProviderName, string> = {
   openai: 'gpt-4o',
   gemini: 'gemini-2.0-flash',
   xai: 'grok-2-latest',
+  grok: 'grok-2-latest',
   deepseek: 'deepseek-chat',
   moonshot: 'moonshot-v1-128k',
   ollama: 'llama3.1',
   meta: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
   perplexity: 'sonar-pro',
+  manus: 'manus-1',
 }
 
 /**
  * Create an LLM provider from config.
+ * All providers implement the unified IMessageEngine (LLMProvider) interface.
  * Throws if the provider name is unknown or API key is missing.
  */
 export function getProvider(config: LLMProviderConfig): LLMProvider {
@@ -35,6 +38,20 @@ export function getProvider(config: LLMProviderConfig): LLMProvider {
     return new GeminiProvider(apiKey)
   }
 
+  // Manus — async task-based provider (lazy-loaded)
+  if (provider === 'manus') {
+    if (!apiKey) throw new Error('Manus API key is required')
+    // Lazy-load to avoid top-level import of optional provider
+    const { ManusProvider } = require('./providers/manus.js') as typeof import('./providers/manus.js')
+    return new ManusProvider(apiKey)
+  }
+
+  // grok is an alias for xai with the OpenAI-compat layer
+  if (provider === 'grok') {
+    if (!apiKey) throw new Error('Grok (xAI) API key is required')
+    return new OpenAICompatProvider('xai', apiKey, baseUrl)
+  }
+
   if (OPENAI_COMPAT_NAMES.has(provider)) {
     // Ollama runs locally and doesn't need an API key
     if (provider !== 'ollama' && !apiKey) {
@@ -43,5 +60,7 @@ export function getProvider(config: LLMProviderConfig): LLMProvider {
     return new OpenAICompatProvider(provider, apiKey, baseUrl)
   }
 
-  throw new Error(`Unknown LLM provider: ${provider}. Supported: anthropic, openai, gemini, xai, deepseek, moonshot, ollama, meta, perplexity`)
+  throw new Error(
+    `Unknown LLM provider: ${provider}. Supported: anthropic, openai, gemini, xai, grok, deepseek, moonshot, ollama, meta, perplexity, manus`
+  )
 }

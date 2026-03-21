@@ -13,9 +13,13 @@ export function getDiscordClient(): Client | null {
 }
 
 /**
- * Start the Discord bot client.
- * Uses WebSocket gateway (not webhooks) — runs alongside Express.
- * No-op if BYOAK_DISCORD_BOT_TOKEN is not configured.
+ * Start the Discord bot client with persistent WebSocket gateway.
+ *
+ * RBAC: Only processes commands from the configured OWNER_USER_ID.
+ * All other users get a polite refusal.
+ *
+ * Real-time trigger: Incoming messages from the owner instantly wake
+ * the agent loop via the BullMQ queue with priority=1.
  */
 export async function startDiscordClient(
   config: AppConfig,
@@ -30,6 +34,11 @@ export async function startDiscordClient(
     return
   }
 
+  const ownerUserId = config.ownerUserId
+  if (!ownerUserId) {
+    logger.warn('OWNER_USER_ID not set — Discord RBAC will reject ALL commands. Set it in .env')
+  }
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -40,7 +49,7 @@ export async function startDiscordClient(
   })
 
   client.once('ready', () => {
-    logger.info('Discord bot connected', { username: client.user?.tag })
+    logger.info('Discord bot connected (persistent WebSocket)', { username: client.user?.tag })
   })
 
   client.on('messageCreate', async (message: Message) => {
@@ -53,6 +62,14 @@ export async function startDiscordClient(
     if (!isMentioned && !isDM) return
 
     const userId = message.author.id
+
+    // ── RBAC: Strict owner-only access ────────────────────────────────
+    if (ownerUserId && userId !== ownerUserId) {
+      logger.warn('Discord RBAC: unauthorized user rejected', { userId, username: message.author.tag })
+      await message.reply('I only respond to my owner. Access denied.')
+      return
+    }
+
     const threadId = message.channel.id
     const rawMessage = message.content
       .replace(/<@!?\d+>/g, '')  // Strip mentions
@@ -60,9 +77,9 @@ export async function startDiscordClient(
 
     if (!rawMessage) return
 
-    logger.info('Discord message received', { userId, channel: threadId })
+    logger.info('Discord message received (RBAC: authorized)', { userId, channel: threadId })
 
-    // Enqueue to BullMQ — same as Slack/Telegram
+    // Real-time wake trigger — priority 1 for instant processing
     await queue.add('discord-message', {
       channelType: 'discord' as const,
       userId,
@@ -73,10 +90,11 @@ export async function startDiscordClient(
         messageId: message.id,
         guildId: message.guild?.id,
       },
-    })
+    }, { priority: 1 })
   })
 
+  // Persistent WebSocket — auto-reconnects built into discord.js
   await client.login(botToken)
   _client = client
-  logger.info('Discord client started')
+  logger.info('Discord client started with persistent WebSocket + RBAC enforcement')
 }

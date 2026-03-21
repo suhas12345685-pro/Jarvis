@@ -59,3 +59,35 @@ declare module 'pdf-parse' {
   }>
   export default pdfParse
 }
+
+declare module 'vosk' {
+  export function setLogLevel(level: number): void
+  export class Model {
+    constructor(path: string)
+    free(): void
+  }
+  export class Recognizer {
+    constructor(opts: { model: Model; sampleRate: number })
+    acceptWaveform(buffer: Buffer): boolean
+    result(): { text?: string }
+    free(): void
+  }
+}
+
+declare module '@ricky0123/vad-node' {
+  export class MicVAD {
+    static new(opts: {
+      onSpeechStart?: () => void
+      onSpeechEnd?: (audio: Float32Array) => void
+      positiveSpeechThreshold?: number
+      negativeSpeechThreshold?: number
+      minSpeechFrames?: number
+    }): Promise<MicVAD>
+    start(): Promise<void>
+    destroy(): void
+  }
+}
+
+declare module 'piper-tts-node' {
+  export function synthesize(text: string, opts?: any): Promise<Buffer>
+}

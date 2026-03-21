@@ -81,12 +81,13 @@ const makeConfig = (): AppConfig => ({
   anthropicApiKey: 'sk-ant-test',
   llmProvider: 'anthropic',
   llmModel: 'claude-sonnet-4-6',
-  dbMode: 'sqlite',
+  storageMode: 'sqlite',
   sqlitePath: '/tmp/test.db',
   redisUrl: 'redis://localhost:6379',
   port: 3000,
   logPath: '/tmp/test.log',
   byoak: [],
+  dbLanguage: 'en',
 })
 
 describe('toolCaller', () => {

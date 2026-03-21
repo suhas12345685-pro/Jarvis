@@ -22,7 +22,14 @@ async function getBrowserContext(): Promise<import('playwright').BrowserContext>
 
   _browser = await (chromium as unknown as typeof import('playwright').chromium).launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--hide-scrollbars',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-dev-shm-usage',
+    ],
   })
 
   _context = await _browser.newContext({

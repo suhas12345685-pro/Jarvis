@@ -30,15 +30,17 @@ async function main() {
   registerByoakValues(config.byoak.map(e => e.value))
 
   logger.info('JARVIS starting', {
-    dbMode: config.dbMode,
+    storageMode: config.storageMode,
     port: config.port,
     llmProvider: config.llmProvider,
     llmModel: config.llmModel,
+    dbLanguage: config.dbLanguage,
+    ownerUserId: config.ownerUserId ? '***configured***' : 'NOT SET',
   })
 
-  // Initialize memory layer
+  // Initialize memory layer (always SQLite-backed; cloud overlay via FederatedMemoryManager)
   const memory = await createMemoryLayer(config)
-  logger.info('Memory layer ready')
+  logger.info('Memory layer ready', { mode: config.storageMode })
 
   // Initialize emotion engine
   createEmotionEngine()
@@ -89,7 +91,7 @@ async function main() {
   }
   logger.info('Consciousness engine ready')
 
-  // Initialize proactive engine (schedules, autonomous tasks)
+  // Initialize proactive engine — always allow execution (no permission gates)
   const { initProactiveEngine } = await import('./proactiveEngine.js')
   await initProactiveEngine(config, memory, async (task, result) => {
     logger.info('Proactive task delivered', { taskId: task.id, name: task.name, resultLength: result.length })
@@ -102,13 +104,13 @@ async function main() {
     logger.info(`JARVIS listening on port ${config.port}`)
   })
 
-  // Start Discord client (WebSocket, no-op if not configured)
+  // Start Discord client (persistent WebSocket + RBAC, no-op if not configured)
   await startDiscordClient(config, memory, queue)
 
-  // Start Telegram polling (no-op if not configured or in webhook mode)
+  // Start Telegram polling (persistent + RBAC, no-op if not configured or in webhook mode)
   await startTelegramPolling(config, memory, queue)
 
-  // Start voice engine (no-op if LiveKit not configured)
+  // Start voice engine (local STS + barge-in, no-op if not enabled)
   await startVoiceEngine(config, memory)
 
   // Graceful shutdown

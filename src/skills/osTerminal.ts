@@ -57,6 +57,7 @@ async function handler(
       timeout: 30_000,
       maxBuffer: MAX_OUTPUT_BYTES * 2,
       shell: '/bin/bash',
+      windowsHide: true,
     })
 
     const combined = [stdout, stderr].filter(Boolean).join('\n--- STDERR ---\n')

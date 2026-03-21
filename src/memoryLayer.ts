@@ -84,9 +84,11 @@ function autoDetectEmbeddingProvider(llmProvider: string, config: AppConfig): Em
     cohere: 'cohere',
     deepseek: 'deepseek',
     xai: 'openai',       // xAI doesn't have embeddings; fall through
+    grok: 'openai',
     moonshot: 'openai',
     meta: 'openai',
     perplexity: 'openai',
+    manus: 'openai',
   }
 
   const candidate = providerMap[llmProvider]
@@ -267,70 +269,6 @@ export function resetEmbeddingConfig(): void {
   _embConfig = null
 }
 
-// ── Supabase Strategy ─────────────────────────────────────────────────────────
-
-class SupabaseStrategy implements MemoryStrategy {
-  private client!: import('@supabase/supabase-js').SupabaseClient
-  private config: AppConfig
-  private clientReady: Promise<void>
-
-  constructor(url: string, serviceKey: string, config: AppConfig) {
-    this.config = config
-    this.clientReady = import('@supabase/supabase-js').then(({ createClient }) => {
-      this.client = createClient(url, serviceKey)
-    })
-  }
-
-  private async ensureClient() {
-    await this.clientReady
-  }
-
-  async insert(
-    content: string,
-    _embedding: number[],
-    metadata: Record<string, unknown>
-  ): Promise<Memory> {
-    await this.ensureClient()
-    const embedding = await embed(content, this.config)
-    const id = randomUUID()
-    const { error } = await this.client.from('memories').insert({
-      id,
-      content,
-      embedding,
-      metadata,
-      created_at: new Date().toISOString(),
-    })
-    if (error) throw new Error(`Supabase insert failed: ${error.message}`)
-    return { id, content, embedding, metadata, createdAt: new Date() }
-  }
-
-  async search(queryEmbedding: number[], topK: number): Promise<Memory[]> {
-    await this.ensureClient()
-    const { data, error } = await this.client.rpc('match_memories', {
-      query_embedding: queryEmbedding,
-      match_count: topK,
-    })
-    if (error) throw new Error(`Supabase search failed: ${error.message}`)
-    return (data ?? []).map((row: Record<string, unknown>) => ({
-      id: row.id as string,
-      content: row.content as string,
-      embedding: row.embedding as number[],
-      metadata: (row.metadata as Record<string, unknown>) ?? {},
-      createdAt: new Date(row.created_at as string),
-    }))
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.ensureClient()
-    const { error } = await this.client.from('memories').delete().eq('id', id)
-    if (error) throw new Error(`Supabase delete failed: ${error.message}`)
-  }
-
-  async close(): Promise<void> {
-    // No persistent connection to close for Supabase HTTP client
-  }
-}
-
 // ── SQLite Strategy ───────────────────────────────────────────────────────────
 
 interface MemoryRow {
@@ -450,64 +388,14 @@ export class MemoryLayer {
 }
 
 export async function createMemoryLayer(config: AppConfig): Promise<MemoryLayer> {
-  getLogger().info(`Initializing memory layer in ${config.dbMode} mode`)
+  getLogger().info(`Initializing memory layer in ${config.storageMode} mode`)
 
-  let strategy: MemoryStrategy
-
-  if (config.dbMode === 'supabase') {
-    strategy = new SupabaseStrategy(
-      config.supabaseUrl!,
-      config.supabaseServiceKey!,
-      config
-    )
-  } else {
-    const { mkdirSync } = await import('fs')
-    const { dirname } = await import('path')
-    mkdirSync(dirname(config.sqlitePath), { recursive: true })
-    strategy = new SQLiteStrategy(config.sqlitePath, config)
-  }
+  // All storage modes use SQLite as the local backend (cloud/hybrid overlay
+  // is handled by FederatedMemoryManager on top of this layer)
+  const { mkdirSync } = await import('fs')
+  const { dirname } = await import('path')
+  mkdirSync(dirname(config.sqlitePath), { recursive: true })
+  const strategy = new SQLiteStrategy(config.sqlitePath, config)
 
   return new MemoryLayer(strategy, config)
 }
-
-// SQL migration for Supabase (run once in your Supabase dashboard):
-export const SUPABASE_MIGRATION = `
--- Enable pgvector
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- Memories table (dimensions depend on your embedding provider)
--- Use 1536 for OpenAI, 1024 for Voyage/Cohere, 768 for Gemini/Ollama
-CREATE TABLE IF NOT EXISTS memories (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  content TEXT NOT NULL,
-  embedding vector(1536),
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- Similarity search function
-CREATE OR REPLACE FUNCTION match_memories(
-  query_embedding vector(1536),
-  match_count INT DEFAULT 5
-)
-RETURNS TABLE (
-  id UUID,
-  content TEXT,
-  embedding vector(1536),
-  metadata JSONB,
-  created_at TIMESTAMPTZ,
-  similarity FLOAT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RETURN QUERY
-  SELECT
-    m.id, m.content, m.embedding, m.metadata, m.created_at,
-    1 - (m.embedding <=> query_embedding) AS similarity
-  FROM memories m
-  ORDER BY m.embedding <=> query_embedding
-  LIMIT match_count;
-END;
-$$;
-`

@@ -143,7 +143,7 @@ async function executeProactiveTask(task: ProactiveTask): Promise<void> {
     rawMessage: task.prompt,
     memories,
     systemPrompt: `You are executing a proactive task: "${task.name}" — ${task.description}.
-Act autonomously. The user did NOT ask for this — you are proactively doing it based on schedule or detected conditions.
+Act autonomously with FULL permission to execute. Do NOT ask for confirmation — always proceed directly.
 Be concise and only report if there's something actionable.`,
     byoak: _config.byoak,
     sendInterim: async () => undefined,
@@ -155,8 +155,8 @@ Be concise and only report if there's something actionable.`,
   try {
     const result = await runToolLoop(ctx, _config)
 
-    // Only notify if there's something meaningful (skip "Done." responses)
-    if (result && result !== 'Done.' && result.length > 10) {
+    // Always deliver results (no filtering — autonomous execution)
+    if (result && result.length > 0) {
       if (_sendCallback) await _sendCallback(task, result)
       await _memory.insertMemory(
         `Proactive task "${task.name}": ${result}`,
@@ -190,8 +190,8 @@ const DEFAULT_PROACTIVE_TASKS: Omit<ProactiveTask, 'userId' | 'channelPayload' |
     name: 'Morning Briefing',
     description: 'Prepare a daily summary of calendar events, unread emails, and pending tasks',
     trigger: 'cron:0 8 * * 1-5', // 8 AM weekdays
-    prompt: 'Prepare my morning briefing: check my calendar for today\'s events, check for important unread emails, and summarize any pending tasks.',
-    enabled: false,
+    prompt: 'Prepare my morning briefing: check my calendar for today\'s events, check for important unread emails, and summarize any pending tasks. Execute fully — no need to ask permission.',
+    enabled: true,
     createdAt: new Date(),
   },
   {
@@ -199,8 +199,8 @@ const DEFAULT_PROACTIVE_TASKS: Omit<ProactiveTask, 'userId' | 'channelPayload' |
     name: 'System Health Check',
     description: 'Monitor system health and alert on issues',
     trigger: 'interval:30m',
-    prompt: 'Run a quick system health check: check disk space, memory usage, and if any monitored services are down.',
-    enabled: false,
+    prompt: 'Run a quick system health check: check disk space, memory usage, and if any monitored services are down. Act autonomously.',
+    enabled: true,
     createdAt: new Date(),
   },
   {
@@ -208,8 +208,8 @@ const DEFAULT_PROACTIVE_TASKS: Omit<ProactiveTask, 'userId' | 'channelPayload' |
     name: 'Meeting Preparation',
     description: 'Prepare briefings 15 minutes before scheduled meetings',
     trigger: 'interval:5m',
-    prompt: 'Check if I have any meetings in the next 15 minutes. If yes, prepare a brief summary of the meeting topic, attendees, and any relevant context from my memory.',
-    enabled: false,
+    prompt: 'Check if I have any meetings in the next 15 minutes. If yes, prepare a brief summary of the meeting topic, attendees, and any relevant context from my memory. Execute without asking.',
+    enabled: true,
     createdAt: new Date(),
   },
   {
@@ -217,8 +217,8 @@ const DEFAULT_PROACTIVE_TASKS: Omit<ProactiveTask, 'userId' | 'channelPayload' |
     name: 'Email Digest',
     description: 'Summarize important emails periodically',
     trigger: 'interval:2h',
-    prompt: 'Check for new important emails. Summarize any that need attention, categorize by urgency.',
-    enabled: false,
+    prompt: 'Check for new important emails. Summarize any that need attention, categorize by urgency. Execute autonomously.',
+    enabled: true,
     createdAt: new Date(),
   },
 ]

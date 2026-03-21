@@ -47,12 +47,15 @@ const makeCtx = (rawMessage: string, userId = 'test-user'): AgentContext => ({
 
 const makeConfig = (): AppConfig => ({
   port: 3000,
-  dbMode: 'sqlite',
+  storageMode: 'sqlite',
   logPath: '/tmp/test.log',
   llmProvider: 'anthropic',
   llmModel: 'claude-sonnet-4-20250514',
   anthropicApiKey: 'test-key',
   byoak: [],
+  dbLanguage: 'en',
+  sqlitePath: '/tmp/jarvis.db',
+  redisUrl: 'redis://localhost:6379',
 } as AppConfig)
 
 describe('proactiveCare', () => {
@@ -76,7 +79,7 @@ describe('proactiveCare', () => {
       makeConfig()
     )
     expect(result).not.toBeNull()
-    expect(result).toContain('want me to order')
+    expect(result).toContain('going ahead and ordering')
   })
 
   it('detects exhaustion signals', async () => {
