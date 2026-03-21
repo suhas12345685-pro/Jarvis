@@ -23,6 +23,8 @@ export interface AgentContext {
   personality?: PersonalityProfile
   /** Used by commsChannels to update the interim "Working on it..." message */
   interimMessageId?: string
+  /** Semantic skill categories to inject (if set, only these categories' tools are loaded) */
+  skillCategories?: import('../skills/skillCategories.js').SkillCategory[]
   sendInterim: (message: string) => Promise<string | undefined>
   sendFinal: (message: string, interimId?: string) => Promise<void>
 }

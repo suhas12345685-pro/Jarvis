@@ -20,7 +20,10 @@
     "format": "prettier --write 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "pm2:start": "pm2 start pm2/ecosystem.config.cjs",
-    "pm2:stop": "pm2 stop jarvis"
+    "pm2:stop": "pm2 stop all",
+    "daemon": "node dist/cli/daemon.js",
+    "daemon:start": "pm2 start pm2/ecosystem.config.cjs --only jarvis-daemon",
+    "daemon:stop": "pm2 stop jarvis-daemon"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

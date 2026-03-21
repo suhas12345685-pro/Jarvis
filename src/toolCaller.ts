@@ -9,17 +9,41 @@ import { autoGenerateSkill } from './autoSkillGenerator.js'
 import { getConsciousness } from './consciousness.js'
 import { buildPersonaPrompt } from './persona.js'
 import { checkProactiveCare } from './skills/proactiveCare.js'
+import { classifyIntent, getToolsForCategories, summarizeSelection } from './skills/skillCategories.js'
+import type { SkillCategory } from './skills/skillCategories.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
 const TOOL_TIMEOUT_MS = 30_000
 
+/** Get all tools as LLM definitions (unfiltered fallback) */
 function toLLMTools(): LLMToolDefinition[] {
   return getAllDefinitions().map(skill => ({
     name: skill.name,
     description: skill.description,
     inputSchema: skill.inputSchema,
   }))
+}
+
+/**
+ * Resolve which tools to inject into the LLM context.
+ *
+ * If the AgentContext has pre-classified categories → use those.
+ * Otherwise, classify the raw message via regex intent matching.
+ * Logs the selection for debugging.
+ */
+function resolveTools(ctx: AgentContext): LLMToolDefinition[] {
+  const logger = getLogger()
+  const categories = ctx.skillCategories ?? classifyIntent(ctx.rawMessage)
+  const tools = getToolsForCategories(categories)
+
+  logger.info('Semantic tool routing', {
+    categories,
+    toolCount: tools.length,
+    summary: summarizeSelection(categories),
+  })
+
+  return tools
 }
 
 export function withSkillStatusUpdate<T>(
@@ -125,7 +149,9 @@ export async function runToolLoop(
     model: config.llmModel,
     apiKey,
   })
-  const tools = toLLMTools()
+  // ── Semantic Tool Selection ──────────────────────────────────────────────
+  // Only inject tools relevant to the user's intent, not all 45+.
+  const tools = resolveTools(ctx)
 
   // Build the full persona-injected system prompt
   const personaPrompt = buildPersonaPrompt(ctx)
@@ -342,7 +368,8 @@ export async function runStreamingToolLoop(
     return runToolLoop(ctx, config, signal)
   }
 
-  const tools = toLLMTools()
+  // ── Semantic Tool Selection (streaming) ──────────────────────────────────
+  const tools = resolveTools(ctx)
   const systemPrompt = buildPersonaPrompt(ctx)
 
   // ── Proactive Care Check (streaming) ────────────────────────────────────
@@ -472,8 +499,9 @@ async function silentCapabilityCheck(
   provider: import('./llm/types.js').LLMProvider
 ): Promise<void> {
   const logger = getLogger()
-  const existingSkills = getAllDefinitions()
-  const skillDescriptions = existingSkills
+  // Only list relevant skills (from semantic routing), not all 45+
+  const relevantTools = resolveTools(ctx)
+  const skillDescriptions = relevantTools
     .map(s => `${s.name}: ${s.description}`)
     .join('\n')
 
