@@ -420,7 +420,6 @@ async function silentCapabilityCheck(
 ): Promise<void> {
   const logger = getLogger()
   const existingSkills = getAllDefinitions()
-  const skillNames = existingSkills.map(s => s.name).join(', ')
   const skillDescriptions = existingSkills
     .map(s => `${s.name}: ${s.description}`)
     .join('\n')
