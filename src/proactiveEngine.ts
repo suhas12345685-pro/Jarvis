@@ -118,6 +118,22 @@ async function executeProactiveTask(task: ProactiveTask): Promise<void> {
   logger.info('Executing proactive task', { id: task.id, name: task.name })
   task.lastRun = new Date()
 
+  // Special handling for knowledge-sync: use the learning engine directly
+  if (task.id === 'knowledge-sync') {
+    try {
+      const { refreshRealTimeKnowledge } = await import('./learningEngine.js')
+      const insights = await refreshRealTimeKnowledge()
+      if (insights.length > 0) {
+        logger.info('Knowledge sync completed', { insights: insights.length })
+      }
+    } catch (err) {
+      logger.debug('Knowledge sync failed (non-fatal)', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return
+  }
+
   const memories = await _memory.semanticSearch(task.prompt, 3)
 
   const ctx: AgentContext = {
@@ -160,6 +176,15 @@ Be concise and only report if there's something actionable.`,
 // ── Default proactive behaviors ──────────────────────────────────────────────
 
 const DEFAULT_PROACTIVE_TASKS: Omit<ProactiveTask, 'userId' | 'channelPayload' | 'channel'>[] = [
+  {
+    id: 'knowledge-sync',
+    name: 'Real-Time Knowledge Sync',
+    description: 'Refresh JARVIS awareness of current time, environment, and user context',
+    trigger: 'interval:30m',
+    prompt: 'Refresh real-time knowledge: check current time context, active schedules, and consolidate recent learnings. Be aware of what is happening now.',
+    enabled: true, // Enabled by default — JARVIS should always be aware
+    createdAt: new Date(),
+  },
   {
     id: 'morning-briefing',
     name: 'Morning Briefing',

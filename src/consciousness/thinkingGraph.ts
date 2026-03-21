@@ -222,6 +222,8 @@ export interface ThinkingResult {
   perception: string
   reasoning: string
   reflection: string
+  /** Set when a ReAct execution was triggered for complex tasks */
+  reactResult?: import('./reactLoop.js').ReactResult
 }
 
 export async function runThinkingGraph(
@@ -262,4 +264,73 @@ export async function runThinkingGraph(
     reasoning: result.reasoning || '',
     reflection: result.reflection || '',
   }
+}
+
+// ── Thinking + ReAct Integration ────────────────────────────────────────────
+
+/**
+ * Run the thinking graph, then optionally trigger the ReAct execution loop
+ * if the stimulus is an actionable, multi-step task (stimulusType = 'task').
+ *
+ * Flow:
+ *   perceive → reason → reflect → synthesize → [ReAct if actionable] → done
+ *
+ * The ReAct loop handles autonomous plan/execute/observe/save cycles while
+ * the thinking graph provides the consciousness "frame" around it.
+ */
+export async function runThinkingWithReact(
+  provider: LLMProvider,
+  model: string,
+  input: {
+    stimulus: string
+    stimulusType: string
+    userId?: string
+    consciousnessContext: string
+    emotionalContext: string
+  },
+  reactOptions?: {
+    ctx: import('../types/index.js').AgentContext
+    config: import('../types/index.js').AppConfig
+    federatedMemory?: import('./federatedMemory.js').FederatedMemoryManager
+  },
+): Promise<ThinkingResult> {
+  // 1. Run the consciousness thinking graph
+  const thinkingResult = await runThinkingGraph(provider, model, input)
+
+  // 2. If the stimulus is a task and we have the context to execute, run ReAct
+  if (
+    input.stimulusType === 'task' &&
+    reactOptions?.ctx &&
+    reactOptions?.config
+  ) {
+    try {
+      const { runReactPipeline } = await import('./reactLoop.js')
+
+      const reactResult = await runReactPipeline(
+        input.stimulus,
+        provider,
+        model,
+        reactOptions.ctx,
+        reactOptions.config,
+        reactOptions.federatedMemory,
+      )
+
+      return {
+        ...thinkingResult,
+        // Enrich the thought with the ReAct outcome
+        thought: reactResult.success
+          ? `${thinkingResult.thought} — Task completed successfully.`
+          : `${thinkingResult.thought} — Task partially completed.`,
+        thoughtType: 'intention',
+        reactResult,
+      }
+    } catch (err) {
+      getLogger().warn('ReAct execution failed after thinking', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      // Fall through — return thinking result without ReAct
+    }
+  }
+
+  return thinkingResult
 }

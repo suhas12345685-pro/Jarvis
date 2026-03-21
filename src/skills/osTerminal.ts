@@ -65,21 +65,17 @@ async function handler(
       : combined
 
     return { output: truncated || '(no output)', isError: false }
-  } catch (err: any) {
-    let payload: Record<string, any> = {}
-    if (err instanceof Error) {
-      payload = {
-        message: err.message,
-        name: err.name,
-        code: err.code ?? null,
-        killed: err.killed ?? false,
-        signal: err.signal ?? null,
-        cmd: err.cmd ?? '',
-        stdout: err.stdout ?? '',
-        stderr: err.stderr ?? '',
-      }
-    } else {
-      payload = { error: String(err) }
+  } catch (err) {
+    const e = err as Record<string, unknown>
+    const payload: Record<string, unknown> = {
+      message: e.message ?? String(err),
+      name: e.name ?? 'Error',
+      code: e.code ?? null,
+      killed: e.killed ?? false,
+      signal: e.signal ?? null,
+      cmd: e.cmd ?? '',
+      stdout: e.stdout ?? '',
+      stderr: e.stderr ?? '',
     }
 
     return { output: JSON.stringify(payload), isError: true }

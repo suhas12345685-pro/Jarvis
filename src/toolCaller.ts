@@ -9,17 +9,41 @@ import { autoGenerateSkill } from './autoSkillGenerator.js'
 import { getConsciousness } from './consciousness.js'
 import { buildPersonaPrompt } from './persona.js'
 import { checkProactiveCare } from './skills/proactiveCare.js'
+import { classifyIntent, getToolsForCategories, summarizeSelection } from './skills/skillCategories.js'
+import type { SkillCategory } from './skills/skillCategories.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
 const TOOL_TIMEOUT_MS = 30_000
 
+/** Get all tools as LLM definitions (unfiltered fallback) */
 function toLLMTools(): LLMToolDefinition[] {
   return getAllDefinitions().map(skill => ({
     name: skill.name,
     description: skill.description,
     inputSchema: skill.inputSchema,
   }))
+}
+
+/**
+ * Resolve which tools to inject into the LLM context.
+ *
+ * If the AgentContext has pre-classified categories → use those.
+ * Otherwise, classify the raw message via regex intent matching.
+ * Logs the selection for debugging.
+ */
+function resolveTools(ctx: AgentContext): LLMToolDefinition[] {
+  const logger = getLogger()
+  const categories = ctx.skillCategories ?? classifyIntent(ctx.rawMessage)
+  const tools = getToolsForCategories(categories)
+
+  logger.info('Semantic tool routing', {
+    categories,
+    toolCount: tools.length,
+    summary: summarizeSelection(categories),
+  })
+
+  return tools
 }
 
 export function withSkillStatusUpdate<T>(
@@ -125,7 +149,9 @@ export async function runToolLoop(
     model: config.llmModel,
     apiKey,
   })
-  const tools = toLLMTools()
+  // ── Semantic Tool Selection ──────────────────────────────────────────────
+  // Only inject tools relevant to the user's intent, not all 45+.
+  const tools = resolveTools(ctx)
 
   // Build the full persona-injected system prompt
   const personaPrompt = buildPersonaPrompt(ctx)
@@ -155,8 +181,26 @@ export async function runToolLoop(
     // Non-fatal — care offer is a bonus, not a requirement
   }
 
+  // ── Recall Relevant Knowledge ───────────────────────────────────────────
+  // Before responding, recall what JARVIS has learned about this topic/user.
+  // Inject as context so the LLM can use past learnings.
+  let knowledgeContext = ''
+  try {
+    const { recallRelevantKnowledge } = await import('./learningEngine.js')
+    const recalled = await recallRelevantKnowledge(ctx.rawMessage, ctx.userId, 5)
+    if (recalled.length > 0) {
+      knowledgeContext = '\n\n[Recalled from memory]\n' + recalled.join('\n') + '\n'
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const userContent = knowledgeContext
+    ? `${ctx.rawMessage}${knowledgeContext}`
+    : ctx.rawMessage
+
   const messages: LLMMessage[] = [
-    { role: 'user', content: ctx.rawMessage },
+    { role: 'user', content: userContent },
   ]
 
   // 2-second feedback timer
@@ -252,6 +296,11 @@ export async function runToolLoop(
           // Consciousness: track skill usage
           try { getConsciousness().onSkillUsed(tc.name, !isError) } catch { /* not ready */ }
 
+          // Learning engine: record outcome (async, non-blocking)
+          import('./learningEngine.js').then(({ learnFromOutcome }) => {
+            learnFromOutcome(ctx.userId, tc.name, tc.arguments, !isError, output).catch(() => {})
+          }).catch(() => {})
+
           // Retry once on error
           if (isError) {
             logger.info('Tool failed, retrying once', { tool: tc.name })
@@ -319,9 +368,31 @@ export async function runStreamingToolLoop(
     return runToolLoop(ctx, config, signal)
   }
 
-  const tools = toLLMTools()
+  // ── Semantic Tool Selection (streaming) ──────────────────────────────────
+  const tools = resolveTools(ctx)
   const systemPrompt = buildPersonaPrompt(ctx)
-  const messages: LLMMessage[] = [{ role: 'user', content: ctx.rawMessage }]
+
+  // ── Proactive Care Check (streaming) ────────────────────────────────────
+  let streamProactiveCareOffer: string | null = null
+  try {
+    streamProactiveCareOffer = await checkProactiveCare(ctx, config)
+  } catch { /* non-fatal */ }
+
+  // Recall relevant knowledge for streaming loop (same as non-streaming)
+  let streamKnowledgeContext = ''
+  try {
+    const { recallRelevantKnowledge } = await import('./learningEngine.js')
+    const recalled = await recallRelevantKnowledge(ctx.rawMessage, ctx.userId, 5)
+    if (recalled.length > 0) {
+      streamKnowledgeContext = '\n\n[Recalled from memory]\n' + recalled.join('\n') + '\n'
+    }
+  } catch { /* non-fatal */ }
+
+  const streamUserContent = streamKnowledgeContext
+    ? `${ctx.rawMessage}${streamKnowledgeContext}`
+    : ctx.rawMessage
+
+  const messages: LLMMessage[] = [{ role: 'user', content: streamUserContent }]
 
   let rounds = 0
 
@@ -367,7 +438,11 @@ export async function runStreamingToolLoop(
     }
 
     if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) {
-      return response.text.trim() || 'Done.'
+      const streamFinalText = response.text.trim() || 'Done.'
+      if (streamProactiveCareOffer) {
+        return `${streamFinalText}\n\n---\n${streamProactiveCareOffer}`
+      }
+      return streamFinalText
     }
 
     // Process tool calls (same as non-streaming)
@@ -388,6 +463,11 @@ export async function runStreamingToolLoop(
         const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
         output = result.output
         isError = result.isError
+
+        // Learning: record outcome (async, non-blocking) — same as non-streaming
+        import('./learningEngine.js').then(({ learnFromOutcome }) => {
+          learnFromOutcome(ctx.userId, tc.name, tc.arguments, !isError, output).catch(() => {})
+        }).catch(() => {})
 
         if (isError) {
           try {
@@ -419,9 +499,9 @@ async function silentCapabilityCheck(
   provider: import('./llm/types.js').LLMProvider
 ): Promise<void> {
   const logger = getLogger()
-  const existingSkills = getAllDefinitions()
-  const skillNames = existingSkills.map(s => s.name).join(', ')
-  const skillDescriptions = existingSkills
+  // Only list relevant skills (from semantic routing), not all 45+
+  const relevantTools = resolveTools(ctx)
+  const skillDescriptions = relevantTools
     .map(s => `${s.name}: ${s.description}`)
     .join('\n')
 

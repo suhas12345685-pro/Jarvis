@@ -4,7 +4,10 @@
  * Three modes:
  *   web  → headless Playwright scraping (webGhost)
  *   exec → OS command execution (osExec)
- *   ai   → full JARVIS AI reasoning with tool loop
+ *   ai   → full JARVIS AI reasoning with semantic tool routing
+ *
+ * The AI mode now uses the semantic skill router to inject only relevant
+ * tools into the LLM context, keeping the context window lean.
  */
 
 import { ghostInfo, ghostError, ghostResult } from './ghostLog.js'
@@ -112,15 +115,49 @@ async function handleAITask(payload: GhostPayload): Promise<void> {
     await loadAllSkills()
     ghostInfo('Skills loaded')
 
+    // Initialize memory layer for AI tasks
+    const { createMemoryLayer } = await import('../memoryLayer.js')
+    const memory = await createMemoryLayer(config)
+    ghostInfo('Memory layer ready')
+
+    // Initialize learning engine so ghost tasks learn from outcomes
+    try {
+      const { initLearningEngine } = await import('../learningEngine.js')
+      initLearningEngine(config, memory)
+      ghostInfo('Learning engine ready')
+    } catch {
+      ghostInfo('Learning engine skipped (non-fatal)')
+    }
+
+    // ── Semantic Intent Classification ──────────────────────────────────
+    // Classify the user's prompt to determine which skill categories to load.
+    // This prevents dumping all 45+ tools into the LLM context.
+    const { classifyIntent, summarizeSelection } = await import('../skills/skillCategories.js')
+    const categories = classifyIntent(payload.prompt)
+    ghostInfo(`Intent classified: ${summarizeSelection(categories)}`)
+
+    // Recall relevant memories for context
+    let ghostMemories: import('../types/index.js').Memory[] = []
+    try {
+      const results = await memory.semanticSearch(payload.prompt, 5)
+      ghostMemories = results
+      if (ghostMemories.length > 0) {
+        ghostInfo(`Recalled ${ghostMemories.length} relevant memories`)
+      }
+    } catch {
+      // Memory search not available or failed — continue without
+    }
+
     // Build a synthetic AgentContext for the tool loop
     const ctx: AgentContext = {
       channelType: 'api',
       userId: `ghost-${process.pid}`,
       threadId: payload.taskId,
       rawMessage: payload.prompt,
-      memories: [],
+      memories: ghostMemories,
       systemPrompt: '',
       byoak: config.byoak,
+      skillCategories: categories,
       sendInterim: async (msg: string) => {
         ghostInfo(`[interim] ${msg}`)
         return undefined
@@ -130,7 +167,7 @@ async function handleAITask(payload: GhostPayload): Promise<void> {
       },
     }
 
-    // Run the tool loop
+    // Run the tool loop (with semantic routing)
     const { runToolLoop } = await import('../toolCaller.js')
     const result = await runToolLoop(ctx, config)
 

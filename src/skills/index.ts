@@ -94,6 +94,8 @@ export async function loadAllSkills(): Promise<void> {
     import('./adaptiveReasoning.js'),
     // Proactive care (mood-based treat offers)
     import('./proactiveCare.js'),
+    // Persistent schedules (survives restarts)
+    import('./persistentSchedule.js'),
   ])
 
   // Load user-created custom skills from disk
