@@ -155,8 +155,26 @@ export async function runToolLoop(
     // Non-fatal — care offer is a bonus, not a requirement
   }
 
+  // ── Recall Relevant Knowledge ───────────────────────────────────────────
+  // Before responding, recall what JARVIS has learned about this topic/user.
+  // Inject as context so the LLM can use past learnings.
+  let knowledgeContext = ''
+  try {
+    const { recallRelevantKnowledge } = await import('./learningEngine.js')
+    const recalled = await recallRelevantKnowledge(ctx.rawMessage, ctx.userId, 5)
+    if (recalled.length > 0) {
+      knowledgeContext = '\n\n[Recalled from memory]\n' + recalled.join('\n') + '\n'
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const userContent = knowledgeContext
+    ? `${ctx.rawMessage}${knowledgeContext}`
+    : ctx.rawMessage
+
   const messages: LLMMessage[] = [
-    { role: 'user', content: ctx.rawMessage },
+    { role: 'user', content: userContent },
   ]
 
   // 2-second feedback timer
@@ -251,6 +269,11 @@ export async function runToolLoop(
 
           // Consciousness: track skill usage
           try { getConsciousness().onSkillUsed(tc.name, !isError) } catch { /* not ready */ }
+
+          // Learning engine: record outcome (async, non-blocking)
+          import('./learningEngine.js').then(({ learnFromOutcome }) => {
+            learnFromOutcome(ctx.userId, tc.name, tc.arguments, !isError, output).catch(() => {})
+          }).catch(() => {})
 
           // Retry once on error
           if (isError) {

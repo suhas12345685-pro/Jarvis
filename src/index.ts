@@ -48,6 +48,19 @@ async function main() {
   await loadAllSkills()
   logger.info('Skills loaded')
 
+  // Initialize learning engine (learns from interactions + outcomes)
+  const { initLearningEngine } = await import('./learningEngine.js')
+  initLearningEngine(config, memory)
+  logger.info('Learning engine ready')
+
+  // Initialize persistent schedule store + restore saved schedules
+  const { initScheduleStore, restoreSchedules } = await import('./skills/persistentSchedule.js')
+  initScheduleStore(memory)
+  const restoredCount = await restoreSchedules()
+  if (restoredCount > 0) {
+    logger.info(`Restored ${restoredCount} persistent schedule(s) from memory`)
+  }
+
   // Initialize consciousness engine
   const consciousness = createConsciousness()
   consciousness.registerSkills(getAllDefinitions().map(s => s.name))

@@ -102,6 +102,11 @@ export function createRouter(config: AppConfig, memory: MemoryLayer) {
 
         emotionEngine.calibratePersonalityFromInteraction(userId, rawMessage, result)
 
+        // Learning engine: extract facts and patterns from this interaction (async, non-blocking)
+        import('./learningEngine.js').then(({ learnFromInteraction }) => {
+          learnFromInteraction(userId, rawMessage, result, channelType).catch(() => {})
+        }).catch(() => {})
+
         jarvisEvents.emit('task:complete', { userId, result: emotionalResult.response, emotion: emotionState.primary })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
