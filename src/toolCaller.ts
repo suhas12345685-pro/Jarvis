@@ -22,6 +22,47 @@ function toLLMTools(): LLMToolDefinition[] {
   }))
 }
 
+export function withSkillStatusUpdate<T>(
+  handler: (input: Record<string, unknown>, ctx: AgentContext) => Promise<T>,
+  toolName: string
+): (input: Record<string, unknown>, ctx: AgentContext) => Promise<T> {
+  return async (input: Record<string, unknown>, ctx: AgentContext): Promise<T> => {
+    const skillPromise = handler(input, ctx)
+
+    let timerId: NodeJS.Timeout | undefined
+    const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+      timerId = setTimeout(() => {
+        resolve({ isTimeout: true })
+      }, 2000)
+    })
+
+    const wrappedSkillPromise = skillPromise.then((result) => {
+      return { isTimeout: false, result }
+    })
+
+    try {
+      const raceResult = await Promise.race([wrappedSkillPromise, timeoutPromise])
+
+      if (raceResult.isTimeout) {
+        const { jarvisEvents } = await import('./router.js')
+        jarvisEvents.emit('status_update', {
+          userId: ctx.userId,
+          threadId: ctx.threadId,
+          tool: toolName,
+          message: `Still executing ${toolName}...`
+        })
+
+        // Return the original promise to allow it to continue executing in the background
+        return await skillPromise
+      } else {
+        return raceResult.result as T
+      }
+    } finally {
+      clearTimeout(timerId)
+    }
+  }
+}
+
 async function executeToolWithTimeout(
   name: string,
   input: Record<string, unknown>,
@@ -49,7 +90,7 @@ async function executeToolWithTimeout(
 
   try {
     const result = await Promise.race([
-      skill.handler(input, ctx),
+      withSkillStatusUpdate(skill.handler, name)(input, ctx),
       new Promise<never>((_, reject) => {
         controller.signal.addEventListener('abort', () => {
           reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`))

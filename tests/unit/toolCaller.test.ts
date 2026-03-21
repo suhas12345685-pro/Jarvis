@@ -3,11 +3,16 @@ import type { AgentContext, AppConfig } from '../../src/types/index.js'
 
 const mockCreate = vi.fn()
 
-vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { create: mockCreate },
-  })),
-}))
+vi.mock('@anthropic-ai/sdk', () => {
+  return {
+    default: class Anthropic {
+      messages = { create: mockCreate }
+    },
+    Anthropic: class Anthropic {
+      messages = { create: mockCreate }
+    }
+  }
+})
 
 vi.mock('../../src/skills/index.js', () => ({
   toLLMTools: () => [],

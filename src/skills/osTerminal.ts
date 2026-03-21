@@ -65,10 +65,24 @@ async function handler(
       : combined
 
     return { output: truncated || '(no output)', isError: false }
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string }
-    const output = [e.stdout, e.stderr, e.message].filter(Boolean).join('\n')
-    return { output: output || 'Command failed', isError: true }
+  } catch (err: any) {
+    let payload: Record<string, any> = {}
+    if (err instanceof Error) {
+      payload = {
+        message: err.message,
+        name: err.name,
+        code: err.code ?? null,
+        killed: err.killed ?? false,
+        signal: err.signal ?? null,
+        cmd: err.cmd ?? '',
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+      }
+    } else {
+      payload = { error: String(err) }
+    }
+
+    return { output: JSON.stringify(payload), isError: true }
   }
 }
 
