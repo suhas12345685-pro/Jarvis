@@ -101,7 +101,7 @@ function toAnthropicMessages(messages: LLMMessage[]): Anthropic.MessageParam[] {
     if (msg.role === 'user') {
       result.push({ role: 'user', content: msg.content })
     } else if (msg.role === 'assistant') {
-      const content: Anthropic.ContentBlock[] = []
+      const content: any[] = []
       if (msg.content) {
         content.push({ type: 'text', text: msg.content })
       }

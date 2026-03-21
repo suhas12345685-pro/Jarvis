@@ -21,41 +21,44 @@ function toLLMTools(): LLMToolDefinition[] {
   }))
 }
 
-export async function withSkillStatusUpdate<T>(
-  skillPromise: Promise<T>,
-  ctx: AgentContext,
+export function withSkillStatusUpdate<T>(
+  handler: (input: Record<string, unknown>, ctx: AgentContext) => Promise<T>,
   toolName: string
-): Promise<T> {
-  let timerId: NodeJS.Timeout | undefined
-  const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
-    timerId = setTimeout(() => {
-      resolve({ isTimeout: true })
-    }, 2000)
-  })
+): (input: Record<string, unknown>, ctx: AgentContext) => Promise<T> {
+  return async (input: Record<string, unknown>, ctx: AgentContext): Promise<T> => {
+    const skillPromise = handler(input, ctx)
 
-  const wrappedSkillPromise = skillPromise.then((result) => {
-    return { isTimeout: false, result }
-  })
+    let timerId: NodeJS.Timeout | undefined
+    const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+      timerId = setTimeout(() => {
+        resolve({ isTimeout: true })
+      }, 2000)
+    })
 
-  try {
-    const raceResult = await Promise.race([wrappedSkillPromise, timeoutPromise])
+    const wrappedSkillPromise = skillPromise.then((result) => {
+      return { isTimeout: false, result }
+    })
 
-    if (raceResult.isTimeout) {
-      const { jarvisEvents } = await import('./router.js')
-      jarvisEvents.emit('status_update', {
-        userId: ctx.userId,
-        threadId: ctx.threadId,
-        tool: toolName,
-        message: `Still executing ${toolName}...`
-      })
+    try {
+      const raceResult = await Promise.race([wrappedSkillPromise, timeoutPromise])
 
-      // Return the original promise to allow it to continue executing in the background
-      return await skillPromise
-    } else {
-      return raceResult.result as T
+      if (raceResult.isTimeout) {
+        const { jarvisEvents } = await import('./router.js')
+        jarvisEvents.emit('status_update', {
+          userId: ctx.userId,
+          threadId: ctx.threadId,
+          tool: toolName,
+          message: `Still executing ${toolName}...`
+        })
+
+        // Return the original promise to allow it to continue executing in the background
+        return await skillPromise
+      } else {
+        return raceResult.result as T
+      }
+    } finally {
+      clearTimeout(timerId)
     }
-  } finally {
-    clearTimeout(timerId)
   }
 }
 
@@ -86,7 +89,7 @@ async function executeToolWithTimeout(
 
   try {
     const result = await Promise.race([
-      withSkillStatusUpdate(skill.handler(input, ctx), ctx, name),
+      withSkillStatusUpdate(skill.handler, name)(input, ctx),
       new Promise<never>((_, reject) => {
         controller.signal.addEventListener('abort', () => {
           reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`))
