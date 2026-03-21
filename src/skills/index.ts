@@ -92,6 +92,8 @@ export async function loadAllSkills(): Promise<void> {
     import('./agentSwarm.js'),
     // Adaptive reasoning (logical/emotional/hybrid)
     import('./adaptiveReasoning.js'),
+    // Proactive care (mood-based treat offers)
+    import('./proactiveCare.js'),
   ])
 
   // Load user-created custom skills from disk

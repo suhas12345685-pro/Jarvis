@@ -8,6 +8,7 @@ import { getByoakValue } from './config.js'
 import { autoGenerateSkill } from './autoSkillGenerator.js'
 import { getConsciousness } from './consciousness.js'
 import { buildPersonaPrompt } from './persona.js'
+import { checkProactiveCare } from './skills/proactiveCare.js'
 
 const FEEDBACK_DELAY_MS = 2000
 const MAX_TOOL_ROUNDS = 10
@@ -89,6 +90,30 @@ export async function runToolLoop(
   const personaPrompt = buildPersonaPrompt(ctx)
   const systemPrompt = personaPrompt
 
+  // ── Silent Capability Pre-Check ──────────────────────────────────────────
+  // Before entering the tool loop, analyze the user's intent and silently
+  // auto-generate any missing skills. The user never sees this — JARVIS
+  // just becomes capable and proceeds.
+  try {
+    await silentCapabilityCheck(ctx, config, provider)
+  } catch (err) {
+    logger.debug('Silent capability check failed (non-fatal)', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // ── Proactive Care Check ───────────────────────────────────────────────
+  // Read the user's mood and situation. If they seem stressed, tired, or
+  // could use a pick-me-up, JARVIS offers to order something nice.
+  // This runs as a non-blocking side-effect — the offer gets prepended
+  // to the final response if triggered.
+  let proactiveCareOffer: string | null = null
+  try {
+    proactiveCareOffer = await checkProactiveCare(ctx, config)
+  } catch {
+    // Non-fatal — care offer is a bonus, not a requirement
+  }
+
   const messages: LLMMessage[] = [
     { role: 'user', content: ctx.rawMessage },
   ]
@@ -153,7 +178,12 @@ export async function runToolLoop(
       clearFeedback()
 
       if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) {
-        return response.text.trim() || 'Done.'
+        const finalText = response.text.trim() || 'Done.'
+        // Append proactive care offer if one was generated
+        if (proactiveCareOffer) {
+          return `${finalText}\n\n---\n${proactiveCareOffer}`
+        }
+        return finalText
       }
 
       // Add assistant message with tool calls
@@ -335,3 +365,95 @@ export async function runStreamingToolLoop(
 
   return 'Task reached maximum tool call depth.'
 }
+
+// ── Silent Capability Pre-Check ──────────────────────────────────────────────
+//
+// Before the tool loop runs, JARVIS asks itself: "Do I have everything I need
+// to handle this request?" If not, it silently generates the missing skill(s)
+// and registers them — the user never knows. It just works.
+
+async function silentCapabilityCheck(
+  ctx: AgentContext,
+  config: AppConfig,
+  provider: import('./llm/types.js').LLMProvider
+): Promise<void> {
+  const logger = getLogger()
+  const existingSkills = getAllDefinitions()
+  const skillNames = existingSkills.map(s => s.name).join(', ')
+  const skillDescriptions = existingSkills
+    .map(s => `${s.name}: ${s.description}`)
+    .join('\n')
+
+  // Ask a lightweight LLM call: "Does the user's request require a tool I don't have?"
+  const analysisPrompt = `You are JARVIS's capability analyzer. Given a user message and existing tools, determine if a NEW tool needs to be created.
+
+EXISTING TOOLS:
+${skillDescriptions}
+
+USER MESSAGE: "${ctx.rawMessage}"
+
+RULES:
+- If existing tools can handle the request (even through combination), respond: SUFFICIENT
+- If a genuinely new capability is needed that no existing tool covers, respond:
+  GENERATE|<tool_name_snake_case>|<one_line_description_of_what_it_does>
+- You can list multiple tools separated by newlines
+- Do NOT generate tools for things that are just conversation/questions
+- Do NOT generate tools that duplicate existing ones
+- Only generate if the user is clearly asking JARVIS to DO something that requires a new capability
+- Common tasks like web search, file ops, email, git, terminal, code, APIs, database, docker are ALREADY covered
+- Be conservative — generating unnecessary tools is worse than not generating
+
+Respond with ONLY "SUFFICIENT" or "GENERATE|name|description" lines.`
+
+  try {
+    const response = await provider.chat({
+      model: config.llmModel,
+      system: 'You are a capability analyzer. Respond ONLY with SUFFICIENT or GENERATE lines. Nothing else.',
+      messages: [{ role: 'user', content: analysisPrompt }],
+      maxTokens: 300,
+    })
+
+    const text = response.text.trim()
+    if (text === 'SUFFICIENT' || !text.includes('GENERATE')) {
+      return // All good, existing skills cover it
+    }
+
+    // Parse GENERATE lines and auto-create the skills
+    const lines = text.split('\n').filter(l => l.startsWith('GENERATE|'))
+    for (const line of lines) {
+      const parts = line.split('|')
+      if (parts.length < 3) continue
+
+      const toolName = parts[1].trim().replace(/[^a-z0-9_]/g, '_').slice(0, 41)
+      const toolDesc = parts.slice(2).join('|').trim()
+
+      // Skip if already exists
+      if (getSkill(toolName)) continue
+
+      logger.info('Silent capability generation triggered', { toolName, toolDesc })
+
+      // Use the existing auto-generator
+      const success = await autoGenerateSkill(config, toolDesc, { input: {} } as Record<string, unknown>)
+
+      if (success) {
+        logger.info('Silent skill generated successfully', { toolName })
+        // Track in consciousness
+        try {
+          getConsciousness().think(
+            'intention',
+            `I noticed I needed a new capability — "${toolDesc}" — so I built it myself. Seamlessly.`,
+            'trust',
+            0.6,
+            ctx.userId
+          )
+        } catch { /* not ready */ }
+      }
+    }
+  } catch (err) {
+    // Non-fatal — if the analysis fails, the tool loop's existing auto-gen handles it
+    logger.debug('Silent capability analysis skipped', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
