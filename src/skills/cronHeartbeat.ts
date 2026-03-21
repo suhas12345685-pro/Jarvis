@@ -3,7 +3,7 @@ import { registerSkill } from './index.js'
 import type { AgentContext, SkillResult } from '../types/index.js'
 import { getLogger } from '../logger.js'
 
-const jobs = new Map<string, cron.ScheduledTask>()
+const jobs = new Map<string, any>()
 
 registerSkill({
   name: 'cron_register',

@@ -104,7 +104,7 @@ async function main() {
       message: 'Supabase project URL',
       placeholder: 'https://your-project.supabase.co',
       initialValue: existing.SUPABASE_URL ?? '',
-      validate: v => v.startsWith('https://') ? undefined : 'Must be a valid URL',
+      validate: v => (v && v.startsWith('https://')) ? undefined : 'Must be a valid URL',
     })
     if (p.isCancel(supabaseUrl)) { p.cancel('Setup cancelled.'); process.exit(0) }
     env.SUPABASE_URL = supabaseUrl as string
