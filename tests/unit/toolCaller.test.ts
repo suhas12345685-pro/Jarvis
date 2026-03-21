@@ -1,18 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { AgentContext, AppConfig } from '../../src/types/index.js'
 
-const mockCreate = vi.fn()
+const mockChat = vi.fn()
 
-vi.mock('@anthropic-ai/sdk', () => {
-  return {
-    default: class Anthropic {
-      messages = { create: mockCreate }
-    },
-    Anthropic: class Anthropic {
-      messages = { create: mockCreate }
-    }
-  }
-})
+// Mock LLM registry — toolCaller uses getProvider(), not raw Anthropic SDK
+vi.mock('../../src/llm/registry.js', () => ({
+  getProvider: () => ({
+    name: 'mock',
+    chat: mockChat,
+  }),
+}))
 
 vi.mock('../../src/skills/index.js', () => ({
   toLLMTools: () => [],
@@ -21,6 +18,44 @@ vi.mock('../../src/skills/index.js', () => ({
   getSkill: vi.fn().mockReturnValue({
     name: 'test_tool',
     handler: vi.fn().mockResolvedValue({ output: 'tool result', isError: false }),
+  }),
+}))
+
+// Mock modules imported by toolCaller
+vi.mock('../../src/consciousness.js', () => ({
+  getConsciousness: () => ({
+    think: vi.fn(),
+    onSkillUsed: vi.fn(),
+  }),
+}))
+
+vi.mock('../../src/persona.js', () => ({
+  buildPersonaPrompt: () => 'You are JARVIS',
+}))
+
+vi.mock('../../src/skills/proactiveCare.js', () => ({
+  checkProactiveCare: vi.fn().mockResolvedValue(null),
+}))
+
+vi.mock('../../src/learningEngine.js', () => ({
+  recallRelevantKnowledge: vi.fn().mockResolvedValue([]),
+  learnFromOutcome: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../src/autoSkillGenerator.js', () => ({
+  autoGenerateSkill: vi.fn().mockResolvedValue(false),
+}))
+
+vi.mock('../../src/config.js', () => ({
+  getByoakValue: () => null,
+}))
+
+vi.mock('../../src/logger.js', () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
   }),
 }))
 
@@ -60,9 +95,17 @@ describe('toolCaller', () => {
   })
 
   it('returns text response on end_turn', async () => {
-    mockCreate.mockResolvedValueOnce({
-      content: [{ type: 'text', text: 'Hello, how can I help?' }],
-      stop_reason: 'end_turn',
+    // First call: silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    // Second call: actual tool loop
+    mockChat.mockResolvedValueOnce({
+      text: 'Hello, how can I help?',
+      toolCalls: [],
+      stopReason: 'end_turn',
     })
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
@@ -72,14 +115,22 @@ describe('toolCaller', () => {
   })
 
   it('handles tool use and returns final text', async () => {
-    mockCreate
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    mockChat
       .mockResolvedValueOnce({
-        content: [{ type: 'tool_use', id: 'tu1', name: 'test_tool', input: {} }],
-        stop_reason: 'tool_use',
+        text: '',
+        toolCalls: [{ id: 'tu1', name: 'test_tool', arguments: {} }],
+        stopReason: 'tool_use',
       })
       .mockResolvedValueOnce({
-        content: [{ type: 'text', text: 'Done using tool.' }],
-        stop_reason: 'end_turn',
+        text: 'Done using tool.',
+        toolCalls: [],
+        stopReason: 'end_turn',
       })
 
     const { runToolLoop } = await import('../../src/toolCaller.js')
@@ -98,9 +149,16 @@ describe('toolCaller', () => {
   })
 
   it('returns fallback text on empty response', async () => {
-    mockCreate.mockResolvedValueOnce({
-      content: [],
-      stop_reason: 'end_turn',
+    // silentCapabilityCheck
+    mockChat.mockResolvedValueOnce({
+      text: 'SUFFICIENT',
+      toolCalls: [],
+      stopReason: 'end_turn',
+    })
+    mockChat.mockResolvedValueOnce({
+      text: '',
+      toolCalls: [],
+      stopReason: 'end_turn',
     })
 
     const { runToolLoop } = await import('../../src/toolCaller.js')

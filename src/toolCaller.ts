@@ -344,7 +344,28 @@ export async function runStreamingToolLoop(
 
   const tools = toLLMTools()
   const systemPrompt = buildPersonaPrompt(ctx)
-  const messages: LLMMessage[] = [{ role: 'user', content: ctx.rawMessage }]
+
+  // ── Proactive Care Check (streaming) ────────────────────────────────────
+  let streamProactiveCareOffer: string | null = null
+  try {
+    streamProactiveCareOffer = await checkProactiveCare(ctx, config)
+  } catch { /* non-fatal */ }
+
+  // Recall relevant knowledge for streaming loop (same as non-streaming)
+  let streamKnowledgeContext = ''
+  try {
+    const { recallRelevantKnowledge } = await import('./learningEngine.js')
+    const recalled = await recallRelevantKnowledge(ctx.rawMessage, ctx.userId, 5)
+    if (recalled.length > 0) {
+      streamKnowledgeContext = '\n\n[Recalled from memory]\n' + recalled.join('\n') + '\n'
+    }
+  } catch { /* non-fatal */ }
+
+  const streamUserContent = streamKnowledgeContext
+    ? `${ctx.rawMessage}${streamKnowledgeContext}`
+    : ctx.rawMessage
+
+  const messages: LLMMessage[] = [{ role: 'user', content: streamUserContent }]
 
   let rounds = 0
 
@@ -390,7 +411,11 @@ export async function runStreamingToolLoop(
     }
 
     if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) {
-      return response.text.trim() || 'Done.'
+      const streamFinalText = response.text.trim() || 'Done.'
+      if (streamProactiveCareOffer) {
+        return `${streamFinalText}\n\n---\n${streamProactiveCareOffer}`
+      }
+      return streamFinalText
     }
 
     // Process tool calls (same as non-streaming)
@@ -411,6 +436,11 @@ export async function runStreamingToolLoop(
         const result = await executeToolWithTimeout(tc.name, tc.arguments, ctx, TOOL_TIMEOUT_MS, config)
         output = result.output
         isError = result.isError
+
+        // Learning: record outcome (async, non-blocking) — same as non-streaming
+        import('./learningEngine.js').then(({ learnFromOutcome }) => {
+          learnFromOutcome(ctx.userId, tc.name, tc.arguments, !isError, output).catch(() => {})
+        }).catch(() => {})
 
         if (isError) {
           try {

@@ -44,6 +44,11 @@ async function main() {
   createEmotionEngine()
   logger.info('Emotion engine ready')
 
+  // Initialize emotion persistence (saves emotion states across sessions)
+  const { createEmotionPersistence } = await import('./emotionPersistence.js')
+  createEmotionPersistence(memory)
+  logger.info('Emotion persistence ready')
+
   // Load all skill modules
   await loadAllSkills()
   logger.info('Skills loaded')
@@ -83,6 +88,13 @@ async function main() {
     })
   }
   logger.info('Consciousness engine ready')
+
+  // Initialize proactive engine (schedules, autonomous tasks)
+  const { initProactiveEngine } = await import('./proactiveEngine.js')
+  await initProactiveEngine(config, memory, async (task, result) => {
+    logger.info('Proactive task delivered', { taskId: task.id, name: task.name, resultLength: result.length })
+  })
+  logger.info('Proactive engine ready')
 
   // Start HTTP router (handles Slack, Telegram, Google Chat webhooks + API)
   const { app, queue } = createRouter(config, memory)

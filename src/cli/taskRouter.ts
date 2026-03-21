@@ -112,13 +112,39 @@ async function handleAITask(payload: GhostPayload): Promise<void> {
     await loadAllSkills()
     ghostInfo('Skills loaded')
 
+    // Initialize memory layer for AI tasks
+    const { createMemoryLayer } = await import('../memoryLayer.js')
+    const memory = await createMemoryLayer(config)
+    ghostInfo('Memory layer ready')
+
+    // Initialize learning engine so ghost tasks learn from outcomes
+    try {
+      const { initLearningEngine } = await import('../learningEngine.js')
+      initLearningEngine(config, memory)
+      ghostInfo('Learning engine ready')
+    } catch {
+      ghostInfo('Learning engine skipped (non-fatal)')
+    }
+
+    // Recall relevant memories for context
+    let ghostMemories: import('../types/index.js').Memory[] = []
+    try {
+      const results = await memory.semanticSearch(payload.prompt, 5)
+      ghostMemories = results
+      if (ghostMemories.length > 0) {
+        ghostInfo(`Recalled ${ghostMemories.length} relevant memories`)
+      }
+    } catch {
+      // Memory search not available or failed — continue without
+    }
+
     // Build a synthetic AgentContext for the tool loop
     const ctx: AgentContext = {
       channelType: 'api',
       userId: `ghost-${process.pid}`,
       threadId: payload.taskId,
       rawMessage: payload.prompt,
-      memories: [],
+      memories: ghostMemories,
       systemPrompt: '',
       byoak: config.byoak,
       sendInterim: async (msg: string) => {
