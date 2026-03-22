@@ -1,0 +1,4 @@
+## 2024-05-18 - [CRITICAL] Fix arbitrary code execution in math_evaluate skill
+**Vulnerability:** The `math_evaluate` skill used a denylist regex (`/[a-zA-Z_$]/`) before passing input to `new Function()`. This allowed JSFuck-style execution using non-alphanumeric characters, leading to critical Remote Code Execution.
+**Learning:** Denylists are fundamentally unsafe for sanitizing input meant for evaluation or execution. Complex payloads can bypass simple alphabet filters using alternative syntaxes. Additionally, when using an allowlist, ensure it explicitly supports all valid characters for the domain (like `,` for function arguments and `[a-zA-Z]` for valid properties like `Math.LOG2E`).
+**Prevention:** Always use a strict allowlist for code execution contexts. For math evaluation, strip explicitly allowed function calls, then assert the remainder ONLY contains digits, basic operators, whitespace, commas, and parentheses (`/[^0-9+\-*\/\(\)\.\,\s]/`).
