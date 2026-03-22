@@ -53,21 +53,18 @@ export function withSkillStatusUpdate<T>(
   return async (input: Record<string, unknown>, ctx: AgentContext): Promise<T> => {
     const skillPromise = handler(input, ctx)
 
-    let timerId: NodeJS.Timeout | undefined
+    let timeoutId: NodeJS.Timeout | undefined
     const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
-      timerId = setTimeout(() => {
-        resolve({ isTimeout: true })
-      }, 2000)
-    })
-
-    const wrappedSkillPromise = skillPromise.then((result) => {
-      return { isTimeout: false, result }
+      timeoutId = setTimeout(() => resolve({ isTimeout: true }), 2000)
     })
 
     try {
-      const raceResult = await Promise.race([wrappedSkillPromise, timeoutPromise])
+      const result = await Promise.race([
+        skillPromise.then(val => ({ isTimeout: false, val })),
+        timeoutPromise
+      ])
 
-      if (raceResult.isTimeout) {
+      if (result.isTimeout) {
         const { jarvisEvents } = await import('./router.js')
         jarvisEvents.emit('status_update', {
           userId: ctx.userId,
@@ -76,13 +73,13 @@ export function withSkillStatusUpdate<T>(
           message: `Still executing ${toolName}...`
         })
 
-        // Return the original promise to allow it to continue executing in the background
+        // Let the original promise continue executing in the background
         return await skillPromise
       } else {
-        return raceResult.result as T
+        return result.val
       }
     } finally {
-      clearTimeout(timerId)
+      clearTimeout(timeoutId)
     }
   }
 }
