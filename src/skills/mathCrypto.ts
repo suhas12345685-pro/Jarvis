@@ -33,7 +33,8 @@ registerSkill({
       .replace(/max/g, 'Math.max')
 
     // Block anything that's not math
-    if (/[a-zA-Z_$](?!ath\.)/.test(sanitized.replace(/Math\.\w+/g, ''))) {
+    const stripped = sanitized.replace(/Math\.\w+/g, '');
+    if (/[^0-9+\-*\/\(\)\.\,\s]/.test(stripped)) {
       return { output: 'Expression contains non-math characters', isError: true }
     }
 
