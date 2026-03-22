@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import type { AgentContext, AppConfig } from '../../../src/types/index.js'
 
 // Mock consciousness (proactiveCare calls getConsciousness().think)
@@ -60,6 +60,8 @@ describe('proactiveCare', () => {
   let handleCareResponse: typeof import('../../../src/skills/proactiveCare.js').handleCareResponse
 
   beforeAll(async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2023-01-01T12:00:00Z')) // Daytime, no late-night triggers
     const mod = await import('../../../src/skills/proactiveCare.js')
     checkProactiveCare = mod.checkProactiveCare
     handleCareResponse = mod.handleCareResponse
@@ -135,5 +137,9 @@ describe('proactiveCare', () => {
     // (cooldown might still block, but the decline logic is reset)
     // We verify the function doesn't throw
     expect(() => handleCareResponse(uid, true)).not.toThrow()
+  })
+
+  afterAll(() => {
+    vi.useRealTimers()
   })
 })
